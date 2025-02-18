@@ -2,7 +2,7 @@
 
 ## Overview
 
-This Python script, `bitaxe_monitor.py`, is an auto-tuning utility designed for the Bitaxe 601 Gamma, a fully open-source Bitcoin ASIC miner based on the Bitaxe Ultra platform with the BM1366 ASIC. Its primary intent is to optimize the miner's performance by dynamically adjusting core voltage and frequency to achieve a target hashrate while managing heat and power consumption. The script leverages dual PID controllers for precise hashrate tuning, with an optional temperature-only mode, and includes a visually engaging TUI for real-time monitoring.
+This Python script, `bitaxe.py`, is an auto-tuning utility designed for the Bitaxe 601 Gamma, a fully open-source Bitcoin ASIC miner based on the Bitaxe Ultra platform with the BM1366 ASIC. Its primary intent is to optimize the miner's performance by dynamically adjusting core voltage and frequency to achieve a target hashrate while managing heat and power consumption. The script leverages dual PID controllers for precise hashrate tuning, with an optional temperature-only mode, and includes a visually engaging TUI for real-time monitoring.
 
 ### Intent
 - **Performance Optimization**: Tune voltage (1100–2400 mV) and frequency (400–750 MHz, in 25 MHz steps) to reach a user-defined hashrate setpoint using PID control.
@@ -38,7 +38,7 @@ The Bitaxe 601 Gamma (assumed similar to Bitaxe Ultra 204):
 
 Run the script with the Bitaxe IP and optional arguments:
 ```bash
-python bitaxe_monitor.py 192.168.68.111 --temp-watch -t 40 -s 400
+python bitaxe.py 192.168.68.111 --temp-watch -t 40 -s 400
 ```
 
 - **Arguments**:
@@ -88,7 +88,7 @@ This implementation serves as an exercise in applying PID control to real-world 
    - Highlighted the exercise aspect of PID application.
 
 ### How to Use:
-- Save the script as `bitaxe_monitor.py`.
+- Save the script as `bitaxe.py`.
 - Create `README.md` with:
   ```bash
   cat > README.md << 'EOF'
@@ -101,9 +101,11 @@ This implementation serves as an exercise in applying PID control to real-world 
   ```
 - Run with PID (normal mode):
   ```bash
-  python bitaxe_monitor.py 192.168.68.111 -t 40 -s 400
+  python bitaxe.py 192.168.68.111 -t 40 -s 400
   ```
 - Run with `--temp-watch`:
   ```bash
-  python bitaxe_monitor.py 192.168.68.111 --temp-watch -t 40 -s 400
+  python bitaxe.py 192.168.68.111 --temp-watch -t 40 -s 400
   ```
+  Credits: based on concepts and code in https://github.com/Hurllz/bitaxe-temp-monitor/ as I really needed a simple-pid based controller I had to refactor this extensively.
+  
