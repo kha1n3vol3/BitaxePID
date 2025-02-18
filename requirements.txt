@@ -1,0 +1,11 @@
+# requirements.txt for Bitaxe 601 Gamma Auto-Tuner
+
+# Required external packages
+pyfiglet
+rich
+simple-pid
+requests
+
+# Standard library packages (already included in Python, no pip install needed)
+# logging
+# argparse
