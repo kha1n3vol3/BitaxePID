@@ -2,7 +2,7 @@
 
 ## Overview
 
-This Python script, `bitaxe.py`, is an auto-tuning utility designed for the Bitaxe 601 Gamma, a fully open-source Bitcoin ASIC miner based on the Bitaxe Ultra platform with the BM1366 ASIC. Its primary intent is to optimize the miner's performance by dynamically adjusting core voltage and frequency to achieve a target hashrate while managing heat and power consumption. The script leverages dual PID controllers for precise hashrate tuning, with an optional temperature-only mode, and includes a visually engaging TUI for real-time monitoring.
+This Python script, `bitaxe.py`, is an auto-tuning utility designed for the Bitaxe 601 Gamma, a fully open-source Bitcoin ASIC miner based on the Bitaxe Ultra platform with the BM1366 ASIC. Its primary intent is to optimize the miner's performance by dynamically adjusting core voltage and frequency to achieve a target hashrate while managing heat and power consumption. The script leverages dual PID controllers for precise hashrate tuning, with an optional temperature-only mode, and includes a visually engaging TUI for real-time monitoring. In addition, logs are recorded for future statisitcal analysis to fine tune the PID controlers. 
 
 ![example running](screenshot.png)
 
@@ -34,13 +34,18 @@ The Bitaxe 601 Gamma (assumed similar to Bitaxe Ultra 204):
    - Install dependencies:
      ```bash
      pip install requests simple-pid rich pyfiglet
+     or
+     bash setup.sh
+     requires uv
      ```
 
 ## Usage
 
 Run the script with the Bitaxe IP and optional arguments:
 ```bash
-python bitaxe.py 192.168.68.111 --temp-watch -t 40 -s 400
+python bitaxe.py 192.168.68.111 --temp-watch -t 40 -f 500
+or
+bash start.sh ip_address
 ```
 
 - **Arguments**:
@@ -67,7 +72,6 @@ The script uses dual PID (Proportional-Integral-Derivative) controllers as its c
 
 This implementation serves as an exercise in applying PID control to real-world hardware tuning, balancing theoretical precision with practical constraints.
 ```
-```
 
 ### Key Changes in Script:
 1. **Restored PID Controllers**:
@@ -85,29 +89,5 @@ This implementation serves as an exercise in applying PID control to real-world 
 1. **Updated Features**:
    - Emphasized PID control as the primary mechanism, with `--temp-watch` as an override.
 
-2. **Revised PID Controllers Section**:
-   - Removed the "disabled" narrative, now describing active PID use, tuning parameters, and behavior in both modes.
-   - Highlighted the exercise aspect of PID application.
-
-### How to Use:
-- Save the script as `bitaxe.py`.
-- Create `README.md` with:
-  ```bash
-  cat > README.md << 'EOF'
-  [Paste the README content from the code block above here]
-  EOF
-  ```
-- Install dependencies:
-  ```bash
-  pip install requests simple-pid rich pyfiglet
-  ```
-- Run with PID (normal mode):
-  ```bash
-  python bitaxe.py 192.168.68.111 -t 40 -s 400
-  ```
-- Run with `--temp-watch`:
-  ```bash
-  python bitaxe.py 192.168.68.111 --temp-watch -t 40 -s 400
-  ```
   Credits: based on concepts and code in https://github.com/Hurllz/bitaxe-temp-monitor/ as I really needed a simple-pid based controller I had to refactor this extensively.
   
