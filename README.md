@@ -4,6 +4,8 @@
 
 This Python script, `bitaxe.py`, is an auto-tuning utility designed for the Bitaxe 601 Gamma, a fully open-source Bitcoin ASIC miner based on the Bitaxe Ultra platform with the BM1366 ASIC. Its primary intent is to optimize the miner's performance by dynamically adjusting core voltage and frequency to achieve a target hashrate while managing heat and power consumption. The script leverages dual PID controllers for precise hashrate tuning, with an optional temperature-only mode, and includes a visually engaging TUI for real-time monitoring.
 
+![example running](screenshot.png)
+
 ### Intent
 - **Performance Optimization**: Tune voltage (1100–2400 mV) and frequency (400–750 MHz, in 25 MHz steps) to reach a user-defined hashrate setpoint using PID control.
 - **Thermal Management**: Prioritize heat control by reducing frequency or voltage when temperature exceeds the target, leveraging the Microchip EMC2101’s proximity to the BM1366. In `--temp-watch` mode, this overrides PID to focus solely on temperature.
