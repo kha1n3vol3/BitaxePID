@@ -1,5 +1,3 @@
----
-
 # BitaxePID Bitaxe 601 Gamma Auto-Tuner
 
 ## Overview
