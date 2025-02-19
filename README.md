@@ -71,16 +71,16 @@ The script uses dual PID (Proportional-Integral-Derivative) controllers as its c
 - **Tuning**: PID parameters are set conservatively to avoid oscillations given the discrete frequency steps and hardware response times, but can be adjusted in `DEFAULTS` for experimentation.
 
 This implementation serves as an exercise in applying PID control to real-world hardware tuning, balancing theoretical precision with practical constraints.
-```
 
 ### Key Changes in Script:
-1. **Restored PID Controllers**:
-   - Re-added `simple_pid` import and PID initialization for `pid_freq` and `pid_volt` with original parameters.
-   - Restored PID logic in `monitor_and_adjust` under the `else` branch (normal mode), including `freq_output`, `volt_output`, stagnation detection, and drop handling.
+1. **PID Controllers**:
+   - Added `simple_pid` import and PID initialization for `pid_freq` and `pid_volt` with original parameters.
+   - Add PID logic in `monitor_and_adjust` under the `else` branch (normal mode), including `freq_output`, `volt_output`, stagnation detection, and drop handling.
 
 2. **Integrated with `--temp-watch`**:
    - Kept the `if temp_watch:` block as threshold-based temp control only, bypassing PID.
    - Normal PID-based optimization runs only when `temp_watch` is `False`.
+   - Logs are accuulated in any case.
 
 3. **Dependencies**:
    - Added `simple-pid` back to the runtime check in `__main__`.
