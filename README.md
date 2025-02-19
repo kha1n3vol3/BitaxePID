@@ -1,5 +1,3 @@
-Below is the updated README with the requested changes, including a concise explanation of what `simple-pid` does in the context of the project. I've also refined the structure and content for clarity and consistency based on the updated code.
-
 ---
 
 # BitaxePID Bitaxe 601 Gamma Auto-Tuner
@@ -9,6 +7,8 @@ Below is the updated README with the requested changes, including a concise expl
 `bitaxe.py` is an auto-tuning utility for the Bitaxe 601 Gamma, an open-source Bitcoin ASIC miner built on the Bitaxe Ultra platform with the BM1366 ASIC. This script optimizes miner performance by dynamically adjusting core voltage and frequency to hit a target hashrate while managing temperature and power usage. It uses dual PID controllers (via `simple-pid`) for precise tuning, offers a temperature-only mode with `--temp-watch`, and provides a cyberpunk-themed TUI for real-time monitoring. Tuning data is logged to CSV and JSON files for analysis and persistence.
 
 ![example running](screenshot2.png)
+
+---
 
 ### Intent
 - **Performance Optimization**: Adjusts voltage (1100–2400 mV) and frequency (400–550 MHz, in 25 MHz steps) to meet a user-defined hashrate setpoint using PID control.
