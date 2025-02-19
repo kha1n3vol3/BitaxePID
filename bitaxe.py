@@ -124,6 +124,7 @@ class BitaxeTuner:
                     self.current_voltage = float(snapshot.get("voltage", DEFAULTS["INITIAL_VOLTAGE"]))
                     self.current_frequency = float(snapshot.get("frequency", DEFAULTS["INITIAL_FREQUENCY"]))
             except Exception as e:
+                logger.error(f"Failed to load snapshot: {e}")
                 console.print(f"[{WARNING_COLOR}]Failed to load snapshot: {e}[/]")
 
     def _setup_logging(self) -> None:
@@ -256,28 +257,57 @@ class BitaxeTuner:
         power = info.get("power", 0)
         hostname = info.get("hostname", "Unknown")
         frequency = info.get("frequency", 0)
+        core_voltage = info.get("coreVoltageActual", 0)
+        voltage = info.get("voltage", 0)
 
         # Hashrate Panel
         hashrate_str = f"{hash_rate:.0f} GH/s"
-        ascii_art = pyfiglet.figlet_format(hashrate_str, font="ansi_shadow")
+        ascii_art = pyfiglet.figlet_format(hashrate_str, font="ansi_regular")
         hashrate_text = Text(ascii_art, style=NEON_GREEN, overflow="crop")
         layout["hashrate"].update(Panel(hashrate_text, title="Hashrate", border_style=NEON_GREEN, style=f"on {BLACK}"))
 
-        # Header
+        # Header with Power Info as a Table
         mode = " [TEMP-WATCH]" if self.temp_watch else ""
-        header_text = Text(f"Bitaxe 601 Gamma Auto-Tuner (Host: {hostname}){mode}", style=f"bold {NEON_PINK}", justify="center")
-        layout["header"].update(Panel(header_text, style=f"on {DARK_GREY}", border_style=NEON_PINK))
+        header_table = Table(box=box.SIMPLE, style=NEON_PINK, title=f"Bitaxe 601 Gamma Auto-Tuner (Host: {hostname}){mode}")
+        header_table.add_column("Parameter", style=f"bold {NEON_PINK}", justify="right")
+        header_table.add_column("Value", style=f"bold {WHITE}")
 
-        # Stats Table
+        power_str = f"{power:.2f}W" + (f" [{WARNING_COLOR}](OVER LIMIT)[/]" if power > self.power_limit else "")
+        header_table.add_row("Power", power_str)
+        header_table.add_row("Current", f"{info.get('current', 0):.2f}mA")
+        header_table.add_row("Core Voltage", f"{core_voltage:.2f}mV")
+        header_table.add_row("Voltage", f"{voltage:.0f}mV")
+
+        layout["header"].update(Panel(header_table, style=f"on {DARK_GREY}", border_style=NEON_PINK))
+
+        # Stats Table (Alphabetized, without power-related stats)
         stats_table = Table(box=box.SIMPLE, style=TEXT_GREY)
         stats_table.add_column("Parameter", style=f"bold {TEXT_GREY}")
         stats_table.add_column("Value", style=f"bold {WHITE}")
-        stats_table.add_row("Temperature", f"{temp if temp == 'N/A' else float(temp):.2f}°C" +
-                            (f" [{CRITICAL_COLOR}](OVERHEAT)[/]" if temp != "N/A" and float(temp) > self.target_temp else ""))
-        stats_table.add_row("Power", f"{power:.2f}W" +
-                            (f" [{WARNING_COLOR}](OVER LIMIT)[/]" if power > self.power_limit else ""))
-        stats_table.add_row("Frequency", f"{frequency:.2f}MHz")
-        stats_table.add_row("Hashrate", f"{hash_rate:.2f} GH/s")
+
+        stats = {
+            "ASIC Model": info.get("ASICModel", "N/A"),
+            "Best Diff": info.get("bestDiff", "N/A"),
+            "Best Session Diff": info.get("bestSessionDiff", "N/A"),
+            "Fan RPM": f"{info.get('fanrpm', 0):.0f}",
+            "Fanspeed": f"{info.get('fanspeed', 0)}%",
+            "Free Heap": f"{info.get('freeHeap', 0) / (1024 * 1024):.2f} MB",
+            "Frequency": f"{frequency:.2f}MHz",
+            "Hashrate": f"{hash_rate:.2f} GH/s",
+            "MAC Address": info.get("macAddr", "N/A"),
+            "SSID": info.get("ssid", "N/A"),
+            "Stratum URL": info.get("stratumURL", "N/A"),
+            "Temperature": f"{temp if temp == 'N/A' else float(temp):.2f}°C" +
+                           (f" [{CRITICAL_COLOR}](OVERHEAT)[/]" if temp != "N/A" and float(temp) > self.target_temp else ""),
+            "Uptime": time.strftime("%H:%M:%S", time.gmtime(info.get("uptimeSeconds", 0))),
+            "Version": info.get("version", "N/A"),
+            "WiFi Status": info.get("wifiStatus", "N/A"),
+            "Shares": f"{info.get('sharesAccepted', 0):.0f} / {info.get('sharesRejected', 0):.0f}"
+        }
+
+        for param, value in sorted(stats.items()):
+            stats_table.add_row(param, str(value))
+
         layout["stats"].update(Panel(stats_table, title="System Stats", border_style=NEON_CYAN))
 
         # Progress Bars
@@ -291,6 +321,7 @@ class BitaxeTuner:
         # Log Panel
         log_text = Text("\n".join(log_messages[-8:]), style=f"{TEXT_GREY} on {BLACK}")
         layout["log"].update(Panel(log_text, title="Log", border_style=MID_GREY))
+
 
     def monitor_and_adjust(self) -> None:
         """Main loop to monitor and adjust Bitaxe settings."""
@@ -310,37 +341,43 @@ class BitaxeTuner:
             live.start()
 
         while running:
-            info = self.get_system_info()
-            if info is None:
-                log_messages.append("Failed to fetch system info, retrying...")
+            try:
+                info = self.get_system_info()
+                if info is None:
+                    log_messages.append("Failed to fetch system info, retrying...")
+                    if live:
+                        self.update_tui(layout, {}, 0)
+                    time.sleep(self.sample_interval)
+                    continue
+
+                temp = info.get("temp", "N/A")
+                hash_rate = info.get("hashRate", 0)
+                power = info.get("power", 0)
+                temp_float = float(temp) if temp != "N/A" else self.target_temp + 1
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                self.log_tuning_data(timestamp, hash_rate, temp_float)
+
+                status = (f"Temp: {temp}°C | Hashrate: {hash_rate:.2f} GH/s | Power: {power}W | "
+                          f"Current Settings -> Voltage: {self.current_voltage}mV, Frequency: {self.current_frequency}MHz")
+                logger.info(status)
+                log_messages.append(status)
                 if live:
-                    self.update_tui(layout, {}, 0)
+                    self.update_tui(layout, info, hash_rate)
+
+                if self.temp_watch:
+                    self._adjust_temp_watch(temp_float)
+                else:
+                    self._adjust_normal_mode(temp_float, hash_rate, power)
+
+                self.current_frequency = self.set_system_settings(self.current_voltage, self.current_frequency)
+                self.save_snapshot()
+                last_hashrate = hash_rate
                 time.sleep(self.sample_interval)
-                continue
-
-            temp = info.get("temp", "N/A")
-            hash_rate = info.get("hashRate", 0)
-            power = info.get("power", 0)
-            temp_float = float(temp) if temp != "N/A" else self.target_temp + 1
-            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-            self.log_tuning_data(timestamp, hash_rate, temp_float)
-
-            status = (f"Temp: {temp}°C | Hashrate: {hash_rate:.2f} GH/s | Power: {power}W | "
-                      f"Current Settings -> Voltage: {self.current_voltage}mV, Frequency: {self.current_frequency}MHz")
-            logger.info(status)
-            log_messages.append(status)
-            if live:
-                self.update_tui(layout, info, hash_rate)
-
-            if self.temp_watch:
-                self._adjust_temp_watch(temp_float)
-            else:
-                self._adjust_normal_mode(temp_float, hash_rate, power)
-
-            self.current_frequency = self.set_system_settings(self.current_voltage, self.current_frequency)
-            self.save_snapshot()
-            last_hashrate = hash_rate
-            time.sleep(self.sample_interval)
+            except Exception as e:
+                logger.error(f"Unexpected error in monitor loop: {e}")
+                if not self.log_to_console:
+                    console.print(f"[{WARNING_COLOR}]Unexpected error in monitor loop: {e}. Continuing...[/]")
+                time.sleep(self.sample_interval)  # Prevent rapid crash looping
 
         if live:
             live.stop()
@@ -364,68 +401,82 @@ class BitaxeTuner:
     def _adjust_normal_mode(self, temp_float: float, hash_rate: float, power: float) -> None:
         """Adjust settings in normal mode using PID controllers."""
         global stagnation_count, drop_count
-        freq_output = self.pid_freq(hash_rate)
-        volt_output = self.pid_volt(hash_rate)
-        proposed_frequency = round(freq_output / DEFAULTS["FREQUENCY_STEP"]) * DEFAULTS["FREQUENCY_STEP"]
-        proposed_frequency = max(DEFAULTS["MIN_FREQUENCY"], min(DEFAULTS["MAX_FREQUENCY"], proposed_frequency))
-        proposed_voltage = round(volt_output / DEFAULTS["VOLTAGE_STEP"]) * DEFAULTS["VOLTAGE_STEP"]
-        proposed_voltage = max(DEFAULTS["MIN_VOLTAGE"], min(DEFAULTS["MAX_VOLTAGE"], proposed_voltage))
+        try:
+            freq_output = self.pid_freq(hash_rate)
+            volt_output = self.pid_volt(hash_rate)
+            proposed_frequency = round(freq_output / DEFAULTS["FREQUENCY_STEP"]) * DEFAULTS["FREQUENCY_STEP"]
+            proposed_frequency = max(DEFAULTS["MIN_FREQUENCY"], min(DEFAULTS["MAX_FREQUENCY"], proposed_frequency))
+            proposed_voltage = round(volt_output / DEFAULTS["VOLTAGE_STEP"]) * DEFAULTS["VOLTAGE_STEP"]
+            proposed_voltage = max(DEFAULTS["MIN_VOLTAGE"], min(DEFAULTS["MAX_VOLTAGE"], proposed_voltage))
 
-        hashrate_dropped = last_hashrate is not None and hash_rate < last_hashrate
-        stagnated = last_hashrate == hash_rate
+            hashrate_dropped = last_hashrate is not None and hash_rate < last_hashrate
+            stagnated = last_hashrate == hash_rate
 
-        if hashrate_dropped:
-            drop_count += 1
-        else:
-            drop_count = 0
-        if stagnated:
-            stagnation_count += 1
-        else:
-            stagnation_count = 0
-
-        if stagnation_count >= 3:
-            logger.info("Hashrate stagnated, resetting PID controllers")
-            log_messages.append("Hashrate stagnated, resetting PID...")
-            self.pid_freq.reset()
-            self.pid_volt.reset()
-            stagnation_count = 0
-
-        if temp_float > self.target_temp or power > self.power_limit * 1.075:
-            logger.warning(f"Constraint exceeded - Temp: {temp_float}°C > {self.target_temp}°C or Power: {power}W > {self.power_limit * 1.075}W")
-            log_messages.append(f"Constraint exceeded: Temp {temp_float}°C, Power {power}W")
-            if not self.log_to_console:
-                console.print(f"[{WARNING_COLOR}]Constraints exceeded! Lowering settings.[/]")
-            if power > self.power_limit * 1.075 and self.current_voltage > DEFAULTS["MIN_VOLTAGE"]:
-                self.current_voltage -= DEFAULTS["VOLTAGE_STEP"]
-                logger.info(f"Power exceeded, reducing voltage to {self.current_voltage}mV")
-                log_messages.append(f"Power exceeded, voltage reduced to {self.current_voltage}mV")
-            elif self.current_frequency > DEFAULTS["MIN_FREQUENCY"] and drop_count < 3:
-                self.current_frequency -= DEFAULTS["FREQUENCY_STEP"]
-                logger.info(f"Reducing frequency to {self.current_frequency}MHz due to constraints")
-                log_messages.append(f"Frequency reduced to {self.current_frequency}MHz")
-        elif hash_rate < self.hashrate_setpoint:
-            if drop_count >= 3 and self.current_frequency > DEFAULTS["MIN_FREQUENCY"]:
-                self.current_frequency -= DEFAULTS["FREQUENCY_STEP"]
-                logger.info(f"Consistent hashrate drop, reducing frequency to {self.current_frequency}MHz")
-                log_messages.append(f"Consistent drop, frequency reduced to {self.current_frequency}MHz")
+            if hashrate_dropped:
+                drop_count += 1
             else:
-                if hash_rate < 0.85 * self.hashrate_setpoint and self.current_voltage < DEFAULTS["MAX_VOLTAGE"]:
-                    self.current_voltage = min(proposed_voltage, self.current_voltage + DEFAULTS["VOLTAGE_STEP"])
-                    logger.info(f"Hashrate low, boosting voltage to {self.current_voltage}mV")
-                    log_messages.append(f"Hashrate low, voltage boosted to {self.current_voltage}mV")
-                if self.current_voltage >= 1150:
-                    self.current_frequency = proposed_frequency
-                    logger.info(f"PID adjusted frequency to {self.current_frequency}MHz")
-                    log_messages.append(f"Frequency adjusted to {self.current_frequency}MHz")
-                if self.current_frequency >= DEFAULTS["MAX_FREQUENCY"] and self.current_voltage < DEFAULTS["MAX_VOLTAGE"]:
-                    self.current_voltage += DEFAULTS["VOLTAGE_STEP"]
-                    logger.info(f"Max frequency reached, increasing voltage to {self.current_voltage}mV")
-                    log_messages.append(f"Max frequency, voltage increased to {self.current_voltage}mV")
-        else:
-            logger.info("System stable, maintaining settings")
-            log_messages.append("System stable, maintaining settings")
-            if not self.log_to_console:
-                console.print(f"[{SUCCESS_COLOR}]Stable. No adjustment needed.[/]")
+                drop_count = 0
+            if stagnated:
+                stagnation_count += 1
+            else:
+                stagnation_count = 0
+
+            if stagnation_count >= 3:
+                logger.info("Hashrate stagnated, resetting PID controllers")
+                log_messages.append("Hashrate stagnated, resetting PID...")
+                self.pid_freq.reset()
+                self.pid_volt.reset()
+                stagnation_count = 0
+
+            # Handle constraints
+            if temp_float > self.target_temp or power > self.power_limit * 1.075:
+                logger.warning(f"Constraint exceeded - Temp: {temp_float}°C > {self.target_temp}°C or Power: {power}W > {self.power_limit * 1.075}W")
+                log_messages.append(f"Constraint exceeded: Temp {temp_float}°C, Power {power}W")
+                if not self.log_to_console:
+                    console.print(f"[{WARNING_COLOR}]Constraints exceeded! Lowering settings.[/]")
+                if power > self.power_limit * 1.075 and self.current_voltage > DEFAULTS["MIN_VOLTAGE"]:
+                    self.current_voltage -= DEFAULTS["VOLTAGE_STEP"]
+                    logger.info(f"Power exceeded, reducing voltage to {self.current_voltage}mV")
+                    log_messages.append(f"Power exceeded, voltage reduced to {self.current_voltage}mV")
+                elif temp_float > self.target_temp:
+                    if self.current_frequency > DEFAULTS["MIN_FREQUENCY"] and drop_count < 3:
+                        self.current_frequency -= DEFAULTS["FREQUENCY_STEP"]
+                        logger.info(f"Reducing frequency to {self.current_frequency}MHz due to temperature")
+                        log_messages.append(f"Frequency reduced to {self.current_frequency}MHz")
+                    elif self.current_voltage > DEFAULTS["MIN_VOLTAGE"]:
+                        self.current_voltage -= DEFAULTS["VOLTAGE_STEP"]
+                        logger.info(f"Frequency at minimum, reducing voltage to {self.current_voltage}mV due to temperature")
+                        log_messages.append(f"Frequency at min, voltage reduced to {self.current_voltage}mV")
+                    else:
+                        logger.info("Both frequency and voltage at minimum, no further adjustments possible")
+                        log_messages.append("At minimum settings, no further adjustments")
+            # Optimize hashrate if no constraints
+            elif hash_rate < self.hashrate_setpoint:
+                if drop_count >= 3 and self.current_frequency > DEFAULTS["MIN_FREQUENCY"]:
+                    self.current_frequency -= DEFAULTS["FREQUENCY_STEP"]
+                    logger.info(f"Consistent hashrate drop, reducing frequency to {self.current_frequency}MHz")
+                    log_messages.append(f"Consistent drop, frequency reduced to {self.current_frequency}MHz")
+                else:
+                    if hash_rate < 0.85 * self.hashrate_setpoint and self.current_voltage < DEFAULTS["MAX_VOLTAGE"]:
+                        self.current_voltage = min(proposed_voltage, self.current_voltage + DEFAULTS["VOLTAGE_STEP"])
+                        logger.info(f"Hashrate low, boosting voltage to {self.current_voltage}mV")
+                        log_messages.append(f"Hashrate low, voltage boosted to {self.current_voltage}mV")
+                    if self.current_voltage >= 1150:
+                        self.current_frequency = proposed_frequency
+                        logger.info(f"PID adjusted frequency to {self.current_frequency}MHz")
+                        log_messages.append(f"Frequency adjusted to {self.current_frequency}MHz")
+                    if self.current_frequency >= DEFAULTS["MAX_FREQUENCY"] and self.current_voltage < DEFAULTS["MAX_VOLTAGE"]:
+                        self.current_voltage += DEFAULTS["VOLTAGE_STEP"]
+                        logger.info(f"Max frequency reached, increasing voltage to {self.current_voltage}mV")
+                        log_messages.append(f"Max frequency, voltage increased to {self.current_voltage}mV")
+            else:
+                logger.info("System stable, maintaining settings")
+                log_messages.append("System stable, maintaining settings")
+                if not self.log_to_console:
+                    console.print(f"[{SUCCESS_COLOR}]Stable. No adjustment needed.[/]")
+        except Exception as e:
+            logger.error(f"Error in PID adjustment: {e}")
+            log_messages.append(f"PID adjustment error: {e}")
 
 def parse_arguments() -> argparse.Namespace:
     """
@@ -484,7 +535,7 @@ def main() -> None:
     try:
         tuner.monitor_and_adjust()
     except Exception as e:
-        logger.error(f"Unexpected error: {e}")
+        logger.error(f"Unexpected error in main: {e}")
         if not tuner.log_to_console:
             console.print(f"[{WARNING_COLOR}]An unexpected error occurred: {e}[/]")
     finally:
