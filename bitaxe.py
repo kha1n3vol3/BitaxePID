@@ -23,14 +23,17 @@ Dependencies:
 """
 
 import argparse
+import base64
 import csv
 import json
 import logging
 import os
 import signal
+import subprocess
 import sys
+import socket
 import time
-from typing import Dict, Optional, Any, Tuple
+from typing import Dict, Optional, Any, Tuple, List
 
 import pyfiglet
 import requests
@@ -111,6 +114,19 @@ class BitaxeTuner:
         self.log_to_console = args.log_to_console
         self.current_voltage = float(args.voltage)
         self.current_frequency = float(args.frequency)
+        
+        # Tracking changes
+        self.previous_metrics = {
+            "hashrate": 0,
+            "shares_accepted": 0,
+            "shares_rejected": 0,
+            "temperature": 0,
+            "voltage": self.current_voltage,
+            "frequency": self.current_frequency,
+            "power": 0
+        }
+        self.metric_changes: List[str] = []
+
         self._load_snapshot()
         self._setup_logging()
         self._setup_pid_controllers()
@@ -188,7 +204,7 @@ class BitaxeTuner:
     def get_system_info(self) -> Optional[Dict[str, Any]]:
         """
         Fetch system information from the Bitaxe API.
-
+    
         Returns:
             Optional[Dict[str, Any]]: System info dictionary or None if the request fails.
         """
@@ -196,10 +212,8 @@ class BitaxeTuner:
             response = requests.get(f"{self.bitaxe_url}/api/system/info", timeout=10)
             response.raise_for_status()
             return response.json()
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error fetching system info: {e}")
-            if not self.log_to_console:
-                console.print(f"[{WARNING_COLOR}]Error fetching system info: {e}[/]")
+        except Exception:
+            # Silently pass without logging or printing any error
             return None
 
     def set_system_settings(self, core_voltage: float, frequency: float) -> float:
@@ -241,50 +255,108 @@ class BitaxeTuner:
         layout.split_column(Layout(name="top", size=15), Layout(name="bottom", ratio=1))
         layout["top"].split_row(Layout(name="hashrate", ratio=3), Layout(name="header", ratio=2))
         layout["bottom"].split_column(Layout(name="main", ratio=1), Layout(name="log", size=10))
-        layout["main"].split_row(Layout(name="stats", ratio=1), Layout(name="progress", ratio=2))
+        layout["main"].split_row(
+            Layout(name="stats", ratio=1), 
+            Layout(name="progress", ratio=2),
+            Layout(name="changes", ratio=1)  # New panel for tracking changes
+        )
         return layout
+
+    def _track_metric_changes(self, info: Dict[str, Any]) -> None:
+        """
+        Track changes in key metrics and log them with both absolute values and percentage changes.
+    
+        Args:
+            info (Dict[str, Any]): System info from the Bitaxe API.
+        """
+        current_metrics = {
+            "hashrate": info.get("hashRate", 0),
+            "temperature": float(info.get("temp", 0)),
+            "power": info.get("power", 0),
+            "voltage": self.current_voltage,
+            "frequency": self.current_frequency
+        }
+    
+        # Reset changes for this iteration
+        self.metric_changes = []
+    
+        # Always show current metrics with change indicators
+        for key, current_value in current_metrics.items():
+            prev_value = self.previous_metrics.get(key, 0)
+            
+            # Skip if previous value is zero to avoid division by zero
+            if prev_value == 0:
+                self.metric_changes.append(f"{key.title()}: {current_value:.2f} (N/A)")
+                continue
+    
+            # Calculate percentage change
+            try:
+                percent_change = ((current_value - prev_value) / prev_value) * 100
+            except (ZeroDivisionError, TypeError):
+                self.metric_changes.append(f"{key.title()}: {current_value:.2f} (N/A)")
+                continue
+    
+            # Format percentage change string
+            percent_str = f"{abs(percent_change):.1f}%"
+            
+            # Determine change type and create descriptive message
+            if abs(percent_change) > 1:  # More than 1% change
+                if percent_change > 0:
+                    self.metric_changes.append(f"↑ {key.title()}: {current_value:.2f} (+{percent_str})")
+                else:
+                    self.metric_changes.append(f"↓ {key.title()}: {current_value:.2f} (-{percent_str})")
+            else:
+                # Show current value with percentage change
+                self.metric_changes.append(f"{key.title()}: {current_value:.2f} ({'+' if percent_change > 0 else ''}{percent_str})")
+    
+        # Update previous metrics
+        self.previous_metrics = current_metrics
 
     def update_tui(self, layout: Layout, info: Dict[str, Any], hash_rate: float) -> None:
         """
         Update the Terminal User Interface with current system stats.
-
+    
         Args:
             layout (Layout): The rich layout object to update.
             info (Dict[str, Any]): System info from the Bitaxe API.
             hash_rate (float): Current hashrate in GH/s.
         """
+        # Track metric changes
+        if info:
+            self._track_metric_changes(info)
+    
         temp = info.get("temp", "N/A")
         power = info.get("power", 0)
         hostname = info.get("hostname", "Unknown")
         frequency = info.get("frequency", 0)
         core_voltage = info.get("coreVoltageActual", 0)
         voltage = info.get("voltage", 0)
-
+    
         # Hashrate Panel
         hashrate_str = f"{hash_rate:.0f} GH/s"
         ascii_art = pyfiglet.figlet_format(hashrate_str, font="ansi_regular")
         hashrate_text = Text(ascii_art, style=NEON_GREEN, overflow="crop")
         layout["hashrate"].update(Panel(hashrate_text, title="Hashrate", border_style=NEON_GREEN, style=f"on {BLACK}"))
-
+    
         # Header with Power Info as a Table
         mode = " [TEMP-WATCH]" if self.temp_watch else ""
         header_table = Table(box=box.SIMPLE, style=NEON_PINK, title=f"Bitaxe 601 Gamma Auto-Tuner (Host: {hostname}){mode}")
         header_table.add_column("Parameter", style=f"bold {NEON_PINK}", justify="right")
         header_table.add_column("Value", style=f"bold {WHITE}")
-
+    
         power_str = f"{power:.2f}W" + (f" [{WARNING_COLOR}](OVER LIMIT)[/]" if power > self.power_limit else "")
         header_table.add_row("Power", power_str)
         header_table.add_row("Current", f"{info.get('current', 0):.2f}mA")
         header_table.add_row("Core Voltage", f"{core_voltage:.2f}mV")
         header_table.add_row("Voltage", f"{voltage:.0f}mV")
-
+    
         layout["header"].update(Panel(header_table, style=f"on {DARK_GREY}", border_style=NEON_PINK))
-
+    
         # Stats Table (Alphabetized, without power-related stats)
         stats_table = Table(box=box.SIMPLE, style=TEXT_GREY)
         stats_table.add_column("Parameter", style=f"bold {TEXT_GREY}")
         stats_table.add_column("Value", style=f"bold {WHITE}")
-
+    
         stats = {
             "ASIC Model": info.get("ASICModel", "N/A"),
             "Best Diff": info.get("bestDiff", "N/A"),
@@ -297,6 +369,8 @@ class BitaxeTuner:
             "MAC Address": info.get("macAddr", "N/A"),
             "SSID": info.get("ssid", "N/A"),
             "Stratum URL": info.get("stratumURL", "N/A"),
+            "Stratum Port": info.get("stratumPort", "N/A"),
+            "Stratum User": info.get("stratumUser", "N/A"),
             "Temperature": f"{temp if temp == 'N/A' else float(temp):.2f}°C" +
                            (f" [{CRITICAL_COLOR}](OVERHEAT)[/]" if temp != "N/A" and float(temp) > self.target_temp else ""),
             "Uptime": time.strftime("%H:%M:%S", time.gmtime(info.get("uptimeSeconds", 0))),
@@ -304,12 +378,12 @@ class BitaxeTuner:
             "WiFi Status": info.get("wifiStatus", "N/A"),
             "Shares": f"{info.get('sharesAccepted', 0):.0f} / {info.get('sharesRejected', 0):.0f}"
         }
-
+    
         for param, value in sorted(stats.items()):
             stats_table.add_row(param, str(value))
-
+    
         layout["stats"].update(Panel(stats_table, title="System Stats", border_style=NEON_CYAN))
-
+    
         # Progress Bars
         progress = Progress(TextColumn("{task.description}", style=WHITE), BarColumn(bar_width=40, complete_style=NEON_GREEN),
                             TextColumn("{task.percentage:>3.0f}%"))
@@ -317,11 +391,30 @@ class BitaxeTuner:
         progress.add_task(f"Voltage (mV): {self.current_voltage:.2f}", total=DEFAULTS["MAX_VOLTAGE"], completed=self.current_voltage)
         progress.add_task(f"Frequency (MHz): {self.current_frequency:.2f}", total=DEFAULTS["MAX_FREQUENCY"], completed=self.current_frequency)
         layout["progress"].update(Panel(progress, title="Performance", border_style=NEON_GREEN))
-
+    
+        # Changes Panel
+        changes_table = Table(box=box.SIMPLE, style=TEXT_GREY)
+        changes_table.add_column("Metric Changes", style=f"bold {WHITE}")
+        
+        # Populate changes table
+        if self.metric_changes:
+            for change in self.metric_changes:
+                # Color-code changes
+                if change.startswith("↑"):
+                    style = SUCCESS_COLOR
+                elif change.startswith("↓"):
+                    style = CRITICAL_COLOR
+                else:
+                    style = WARNING_COLOR
+                changes_table.add_row(Text(change, style=style))
+        else:
+            changes_table.add_row("No significant changes")
+    
+        layout["changes"].update(Panel(changes_table, title="Metric Changes", border_style=NEON_CYAN))
+    
         # Log Panel
         log_text = Text("\n".join(log_messages[-8:]), style=f"{TEXT_GREY} on {BLACK}")
         layout["log"].update(Panel(log_text, title="Log", border_style=MID_GREY))
-
 
     def monitor_and_adjust(self) -> None:
         """Main loop to monitor and adjust Bitaxe settings."""
@@ -333,13 +426,13 @@ class BitaxeTuner:
         if not self.log_to_console:
             console.print(f"[{SUCCESS_COLOR}]Starting Bitaxe Monitor. Target temp: {self.target_temp}°C, "
                           f"Target hashrate: {self.hashrate_setpoint} GH/s, Temp-watch: {self.temp_watch}[/]")
-
+    
         self.current_frequency = self.set_system_settings(self.current_voltage, self.current_frequency)
         layout = self.create_layout() if not self.log_to_console else None
         live = Live(layout, console=console, refresh_per_second=1) if not self.log_to_console else None
         if live:
             live.start()
-
+    
         while running:
             try:
                 info = self.get_system_info()
@@ -349,36 +442,34 @@ class BitaxeTuner:
                         self.update_tui(layout, {}, 0)
                     time.sleep(self.sample_interval)
                     continue
-
+    
                 temp = info.get("temp", "N/A")
                 hash_rate = info.get("hashRate", 0)
                 power = info.get("power", 0)
                 temp_float = float(temp) if temp != "N/A" else self.target_temp + 1
                 timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
                 self.log_tuning_data(timestamp, hash_rate, temp_float)
-
+    
                 status = (f"Temp: {temp}°C | Hashrate: {hash_rate:.2f} GH/s | Power: {power}W | "
                           f"Current Settings -> Voltage: {self.current_voltage}mV, Frequency: {self.current_frequency}MHz")
                 logger.info(status)
                 log_messages.append(status)
                 if live:
                     self.update_tui(layout, info, hash_rate)
-
+    
                 if self.temp_watch:
                     self._adjust_temp_watch(temp_float)
                 else:
                     self._adjust_normal_mode(temp_float, hash_rate, power)
-
+    
                 self.current_frequency = self.set_system_settings(self.current_voltage, self.current_frequency)
                 self.save_snapshot()
                 last_hashrate = hash_rate
                 time.sleep(self.sample_interval)
-            except Exception as e:
-                logger.error(f"Unexpected error in monitor loop: {e}")
-                if not self.log_to_console:
-                    console.print(f"[{WARNING_COLOR}]Unexpected error in monitor loop: {e}. Continuing...[/]")
-                time.sleep(self.sample_interval)  # Prevent rapid crash looping
-
+            except Exception:
+                # Completely silent error handling
+                time.sleep(self.sample_interval)
+    
         if live:
             live.stop()
 
