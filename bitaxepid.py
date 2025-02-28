@@ -30,6 +30,7 @@ from rich.text import Text
 from rich.live import Live
 from rich import box
 from simple_pid import PID
+import yaml
 
 # Color Constants for Cyberdeck Theme
 BACKGROUND = "#121212"          # Dark background
@@ -418,67 +419,116 @@ def setup_logging_arguments(self):
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="BitaxePID Auto-Tuner")
-    parser.add_argument("bitaxepid_ip", type=str, help="IP address of the Bitaxe")
-    parser.add_argument("-v", "--voltage", type=int, help=f"Initial voltage in mV (default: {DEFAULTS['INITIAL_VOLTAGE']})")
-    parser.add_argument("-f", "--frequency", type=int, help=f"Initial frequency in MHz (default: {DEFAULTS['INITIAL_FREQUENCY']})")
-    parser.add_argument("-t", "--target_temp", type=float, help=f"Target temp in °C (default: {DEFAULTS['TARGET_TEMP']})")
-    parser.add_argument("-i", "--interval", type=int, help=f"Sample interval in seconds (default: {DEFAULTS['SAMPLE_INTERVAL']})")
-    parser.add_argument("-p", "--power_limit", type=float, help=f"Power limit in W (default: {DEFAULTS['POWER_LIMIT']})")
-    parser.add_argument("-s", "--setpoint", type=float, help=f"Target hashrate in GH/s (default: {DEFAULTS['HASHRATE_SETPOINT']})")
-    parser.add_argument("--temp-watch", action="store_true", help="Enable temp-watch mode")
+
+    # New --ip flag (Explicit instead of positional)
+    parser.add_argument("--ip", required=True, type=str, help="IP address of the Bitaxe miner")
+
+    # YAML config support
+    parser.add_argument("--config", type=str, help="Path to YAML configuration file")
+
+    # Existing configuration/overrides via CLI
+    parser.add_argument("-v", "--voltage", type=int, help="Initial voltage in mV")
+    parser.add_argument("-f", "--frequency", type=int, help="Initial frequency in MHz")
+    parser.add_argument("-t", "--target_temp", type=float, help="Target temperature in °C")
+    parser.add_argument("-i", "--interval", type=int, help="Sample interval in seconds")
+    parser.add_argument("-p", "--power_limit", type=float, help="Power limit in W")
+    parser.add_argument("-s", "--setpoint", type=float, help="Target hashrate in GH/s")
+    parser.add_argument("--temp-watch", action="store_true", help="Enable temperature-watch mode")
     parser.add_argument("--log-to-console", action="store_true", help="Log to console only (disables TUI)")
+
+    # Logging level argument
+    parser.add_argument("--logging-level", choices=["info", "debug"], default="info",
+                        help="Logging detail (default: info)")
+
     return parser.parse_args()
 
-def main() -> None:
+def load_yaml_config(path: str) -> dict:
+    try:
+        with open(path, "r") as f:
+            return yaml.safe_load(f)
+    except Exception as e:
+        logger.error(f"Failed to load configuration file: {e}")
+        sys.exit(1)
+
+def main():
     args = parse_arguments()
 
-    # Configure event logging
+    # Set logging level from command line flag
     handlers = [logging.FileHandler("bitaxepid_monitor.log")]
     if args.log_to_console:
         handlers.append(logging.StreamHandler())
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", handlers=handlers)
 
-    # Calculate effective configuration
-    target_temp = args.target_temp if args.target_temp is not None else DEFAULTS["TARGET_TEMP"]
-    sample_interval = args.interval if args.interval is not None else DEFAULTS["SAMPLE_INTERVAL"]
-    power_limit = args.power_limit if args.power_limit is not None else DEFAULTS["POWER_LIMIT"]
-    setpoint = args.setpoint if args.setpoint is not None else DEFAULTS["HASHRATE_SETPOINT"]
+    logging.basicConfig(level=logging.DEBUG if args.logging_level == "debug" else logging.INFO, 
+                        format="%(asctime)s - %(levelname)s - %(message)s",
+                        handlers=handlers)
 
-    # Initialize components
-    snapshot_manager = JsonSnapshotManager(SNAPSHOT_FILE, DEFAULTS["INITIAL_VOLTAGE"], DEFAULTS["INITIAL_FREQUENCY"])
+    config = DEFAULTS.copy()
+    if args.config:
+        yaml_config = load_yaml_config(args.config)
+        if yaml_config:
+            config.update(yaml_config)
+            logger.info(f"Loaded configuration from {args.config}")
+
+    # Settings priorities: CLI args > YAML config > defaults
+    initial_voltage = args.voltage if args.voltage is not None else config["INITIAL_VOLTAGE"]
+    initial_frequency = args.frequency if args.frequency is not None else config["INITIAL_FREQUENCY"]
+    target_temp = args.target_temp if args.target_temp is not None else config["TARGET_TEMP"]
+    sample_interval = args.interval if args.interval is not None else config["SAMPLE_INTERVAL"]
+    power_limit = args.power_limit if args.power_limit is not None else config["POWER_LIMIT"]
+    setpoint = args.setpoint if args.setpoint is not None else config["HASHRATE_SETPOINT"]
+
+    snapshot_manager = JsonSnapshotManager(
+        config.get("SNAPSHOT_FILE", SNAPSHOT_FILE),
+        config.get("INITIAL_VOLTAGE", DEFAULTS["INITIAL_VOLTAGE"]),
+        config.get("INITIAL_FREQUENCY", DEFAULTS["INITIAL_FREQUENCY"])
+    )
+
     voltage_from_snapshot, frequency_from_snapshot = snapshot_manager.load()
-    initial_voltage = args.voltage if args.voltage is not None else voltage_from_snapshot
-    initial_frequency = args.frequency if args.frequency is not None else frequency_from_snapshot
+    initial_voltage = initial_voltage if args.voltage else voltage_from_snapshot
+    initial_frequency = initial_frequency if args.frequency else frequency_from_snapshot
 
-    hardware_gateway = BitaxeAPI(args.bitaxepid_ip, DEFAULTS["MIN_VOLTAGE"], DEFAULTS["MAX_VOLTAGE"],
-                                 DEFAULTS["MIN_FREQUENCY"], DEFAULTS["MAX_FREQUENCY"], DEFAULTS["FREQUENCY_STEP"])
+    hardware_gateway = BitaxeAPI(
+        args.ip,  # <-- notice here we now use args.ip from your --ip argument
+        config["MIN_VOLTAGE"],
+        config["MAX_VOLTAGE"],
+        config["MIN_FREQUENCY"],
+        config["MAX_FREQUENCY"],
+        config["FREQUENCY_STEP"]
+    )
 
-    logger_instance = CSVLogger(LOG_FILE)
+    logger_instance = CSVLogger(config.get("LOG_FILE", LOG_FILE))
 
     if args.temp_watch:
-        tuning_strategy = TempWatchTuningStrategy(DEFAULTS["MIN_VOLTAGE"], DEFAULTS["MIN_FREQUENCY"],
-                                                  DEFAULTS["VOLTAGE_STEP"], DEFAULTS["FREQUENCY_STEP"], target_temp)
+        tuning_strategy = TempWatchTuningStrategy(
+            config["MIN_VOLTAGE"],
+            config["MIN_FREQUENCY"],
+            config["VOLTAGE_STEP"],
+            config["FREQUENCY_STEP"],
+            target_temp
+        )
     else:
-        tuning_strategy = PIDTuningStrategy(DEFAULTS["PID_FREQ_KP"], DEFAULTS["PID_FREQ_KI"], DEFAULTS["PID_FREQ_KD"],
-                                            DEFAULTS["PID_VOLT_KP"], DEFAULTS["PID_VOLT_KI"], DEFAULTS["PID_VOLT_KD"],
-                                            DEFAULTS["MIN_VOLTAGE"], DEFAULTS["MAX_VOLTAGE"],
-                                            DEFAULTS["MIN_FREQUENCY"], DEFAULTS["MAX_FREQUENCY"],
-                                            DEFAULTS["VOLTAGE_STEP"], DEFAULTS["FREQUENCY_STEP"],
-                                            setpoint, sample_interval, target_temp, power_limit)
+        tuning_strategy = PIDTuningStrategy(
+            config["PID_FREQ_KP"], config["PID_FREQ_KI"], config["PID_FREQ_KD"],
+            config["PID_VOLT_KP"], config["PID_VOLT_KI"], config["PID_VOLT_KD"],
+            config["MIN_VOLTAGE"], config["MAX_VOLTAGE"],
+            config["MIN_FREQUENCY"], config["MAX_FREQUENCY"],
+            config["VOLTAGE_STEP"], config["FREQUENCY_STEP"],
+            setpoint, sample_interval,
+            target_temp, power_limit
+        )
 
     presenter = NullPresenter() if args.log_to_console else TUIPresenter()
+    use_case = TuneBitaxeUseCase(
+        tuning_strategy, hardware_gateway, logger_instance, snapshot_manager, presenter,
+        sample_interval, initial_voltage, initial_frequency
+    )
 
-    use_case = TuneBitaxeUseCase(tuning_strategy, hardware_gateway, logger_instance, snapshot_manager, presenter,
-                                 sample_interval, initial_voltage, initial_frequency)
-
-    # Signal handling
     def handle_sigint(signum: int, frame: Any) -> None:
         logger.info("Received SIGINT, exiting")
         use_case.stop()
 
     signal.signal(signal.SIGINT, handle_sigint)
 
-    # Run the application
     try:
         logger.info(f"Starting BitaxePID Monitor. Target temp: {target_temp}°C, Target hashrate: {setpoint} GH/s")
         use_case.start()
@@ -490,26 +540,4 @@ def main() -> None:
         logger.info("Exiting monitor")
 
 if __name__ == "__main__":
-    for package in ["rich", "pyfiglet", "simple_pid"]:
-        try:
-            __import__(package)
-        except ImportError:
-            console.print(f"[{WARNING_COLOR}]Installing '{package}'...[/]")
-            os.system(f"pip install {package.replace('_', '-')}")
-    main()
-
-
-
-def main():
-    parser = ArgumentParser()
-    args = parser.parse()
-    print(f"Input: {args.input}, Verbose: {args.verbose}, Timeout: {args.timeout}")
-    
-    # Use config values, overridden by command-line args if provided
-    initial_voltage = args.voltage if args.voltage is not None else config.get("INITIAL_VOLTAGE", DEFAULTS["INITIAL_VOLTAGE"])
-    initial_frequency = config.get("INITIAL_FREQUENCY", DEFAULTS["INITIAL_FREQUENCY"])
-    # Apply similar logic to other parameters
-    print(f"Starting with voltage: {initial_voltage} mV, frequency: {initial_frequency} MHz")
-
-if __name__ == "__main__":
-    main()    
+    main()  
