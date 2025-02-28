@@ -1,0 +1,21 @@
+# BM1368.yaml
+initial_frequency: 490       # "490 (default)" from BM1368DropdownFrequency
+min_frequency: 400           # lowest available frequency in BM1368DropdownFrequency
+max_frequency: 575           # highest available frequency in BM1368DropdownFrequency
+initial_voltage: 1166        # "1166 (default)" from BM1368CoreVoltage
+min_voltage: 1100            # lowest available voltage in BM1368CoreVoltage
+max_voltage: 1300            # highest available voltage in BM1368CoreVoltage
+FREQUENCY_STEP: 25
+VOLTAGE_STEP: 10
+TARGET_TEMP: 45.0
+SAMPLE_INTERVAL: 5
+POWER_LIMIT: 15.0
+HASHRATE_SETPOINT: 500
+PID_FREQ_KP: 0.1
+PID_FREQ_KI: 0.05
+PID_FREQ_KD: 0.02
+PID_VOLT_KP: 0.1
+PID_VOLT_KI: 0.05
+PID_VOLT_KD: 0.02
+LOG_FILE: "bitaxepid_tuning_log_BM1368.csv"
+SNAPSHOT_FILE: "bitaxepid_snapshot_BM1368.json"

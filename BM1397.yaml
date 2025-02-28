@@ -1,0 +1,21 @@
+# BM1397.yaml
+initial_frequency: 425       # "425 (default)" from BM1397DropdownFrequency
+min_frequency: 400           # lowest available frequency in BM1397DropdownFrequency
+max_frequency: 650           # highest available frequency in BM1397DropdownFrequency
+initial_voltage: 1200        # default value from BM1397CoreVoltage (no explicit default marker)
+min_voltage: 1100            # lowest available voltage in BM1397CoreVoltage
+max_voltage: 1500            # highest available voltage in BM1397CoreVoltage
+FREQUENCY_STEP: 25
+VOLTAGE_STEP: 10
+TARGET_TEMP: 45.0
+SAMPLE_INTERVAL: 5
+POWER_LIMIT: 15.0
+HASHRATE_SETPOINT: 500
+PID_FREQ_KP: 0.1
+PID_FREQ_KI: 0.05
+PID_FREQ_KD: 0.02
+PID_VOLT_KP: 0.1
+PID_VOLT_KI: 0.05
+PID_VOLT_KD: 0.02
+LOG_FILE: "bitaxepid_tuning_log_BM1397.csv"
+SNAPSHOT_FILE: "bitaxepid_snapshot_BM1397.json"
