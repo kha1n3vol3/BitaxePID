@@ -59,12 +59,13 @@ DEFAULTS = {
     "SAMPLE_INTERVAL": 5,
     "POWER_LIMIT": 15.0,
     "HASHRATE_SETPOINT": 500,
-    "PID_FREQ_KP": 0.1,
-    "PID_FREQ_KI": 0.05,
-    "PID_FREQ_KD": 0.02,
-    "PID_VOLT_KP": 0.1,
-    "PID_VOLT_KI": 0.05,
-    "PID_VOLT_KD": 0.02,
+    # PID constants tuned to reduce integral windup and improve stability
+    "PID_FREQ_KP": 0.2,    # Increased proportional gain for frequency to enhance responsiveness to current hashrate errors
+    "PID_FREQ_KI": 0.01,   # Reduced integral gain to slow integral accumulation and prevent windup
+    "PID_FREQ_KD": 0.02,   # Derivative gain unchanged, suitable for damping with typical noise levels
+    "PID_VOLT_KP": 0.1,    # Proportional gain for voltage, unchanged as voltage adjustments are secondary
+    "PID_VOLT_KI": 0.01,   # Reduced integral gain to minimize windup in voltage control
+    "PID_VOLT_KD": 0.02,   # Derivative gain unchanged, maintains stability
     "LOG_FILE": "bitaxepid_tuning_log.csv",
     "SNAPSHOT_FILE": "bitaxpide_snapshot.json"
 }
@@ -126,6 +127,7 @@ class PIDTuningStrategy:
         self.drop_count = 0
 
     def adjust(self, current_voltage: float, current_frequency: float, temp: float, hashrate: float, power: float) -> Tuple[float, float]:
+        # Calculate PID outputs and constrain them
         freq_output = self.pid_freq(hashrate)
         volt_output = self.pid_volt(hashrate)
         proposed_frequency = round(freq_output / self.frequency_step) * self.frequency_step
@@ -133,9 +135,9 @@ class PIDTuningStrategy:
         proposed_voltage = round(volt_output / self.voltage_step) * self.voltage_step
         proposed_voltage = max(self.min_voltage, min(self.max_voltage, proposed_voltage))
 
+        # Track hashrate trends
         hashrate_dropped = self.last_hashrate is not None and hashrate < self.last_hashrate
         stagnated = self.last_hashrate == hashrate
-
         if hashrate_dropped:
             self.drop_count += 1
         else:
@@ -145,33 +147,35 @@ class PIDTuningStrategy:
         else:
             self.stagnation_count = 0
 
-        if self.stagnation_count >= 3:
-            logger.info("Hashrate stagnated, resetting PID controllers")
-            self.pid_freq.reset()
-            self.pid_volt.reset()
-            self.stagnation_count = 0
-
         new_voltage = current_voltage
         new_frequency = current_frequency
 
+        # Adjustment logic with detailed logging
         if temp > self.target_temp or power > self.power_limit * 1.075:
             if power > self.power_limit * 1.075 and current_voltage > self.min_voltage:
                 new_voltage = current_voltage - self.voltage_step
+                logger.info(f"Reducing voltage to {new_voltage}mV due to power exceeding limit ({power}W > {self.power_limit * 1.075}W)")
             elif temp > self.target_temp:
                 if current_frequency > self.min_frequency and self.drop_count < 3:
                     new_frequency = current_frequency - self.frequency_step
+                    logger.info(f"Reducing frequency to {new_frequency}MHz due to temperature exceeding target ({temp}°C > {self.target_temp}°C)")
                 elif current_voltage > self.min_voltage:
                     new_voltage = current_voltage - self.voltage_step
+                    logger.info(f"Reducing voltage to {new_voltage}mV due to temperature exceeding target and frequency at minimum or drop count high")
         elif hashrate < self.pid_freq.setpoint:
             if self.drop_count >= 3 and current_frequency > self.min_frequency:
                 new_frequency = current_frequency - self.frequency_step
+                logger.info(f"Reducing frequency to {new_frequency}MHz due to multiple hashrate drops")
             else:
                 if hashrate < 0.85 * self.pid_freq.setpoint and current_voltage < self.max_voltage:
                     new_voltage = min(proposed_voltage, current_voltage + self.voltage_step)
-                if current_voltage >= 1150:
-                    new_frequency = proposed_frequency
+                    logger.info(f"Increasing voltage to {new_voltage}mV due to severe hashrate drop ({hashrate} < {0.85 * self.pid_freq.setpoint})")
+                # No FREQ_ADJUST_VOLTAGE_THRESHOLD check anymore
+                new_frequency = proposed_frequency
+                logger.info(f"Adjusting frequency to {new_frequency}MHz based on PID output")
                 if current_frequency >= self.max_frequency and current_voltage < self.max_voltage:
                     new_voltage = current_voltage + self.voltage_step
+                    logger.info(f"Increasing voltage to {new_voltage}mV as frequency is at maximum")
         else:
             logger.info("System stable, maintaining settings")
 
