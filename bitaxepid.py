@@ -149,38 +149,58 @@ class PIDTuningStrategy:
 
         new_voltage = current_voltage
         new_frequency = current_frequency
+        asic_model = "BM1366"
 
-        # Adjustment logic with detailed logging
-        if temp > self.target_temp or power > self.power_limit * 1.075:
-            if power > self.power_limit * 1.075 and current_voltage > self.min_voltage:
-                new_voltage = current_voltage - self.voltage_step
-                logger.info(f"Reducing voltage to {new_voltage}mV due to power exceeding limit ({power}W > {self.power_limit * 1.075}W)")
-            elif temp > self.target_temp:
-                if current_frequency > self.min_frequency and self.drop_count < 3:
-                    new_frequency = current_frequency - self.frequency_step
-                    logger.info(f"Reducing frequency to {new_frequency}MHz due to temperature exceeding target ({temp}°C > {self.target_temp}°C)")
-                elif current_voltage > self.min_voltage:
-                    new_voltage = current_voltage - self.voltage_step
-                    logger.info(f"Reducing voltage to {new_voltage}mV due to temperature exceeding target and frequency at minimum or drop count high")
-        elif hashrate < self.pid_freq.setpoint:
-            if self.drop_count >= 3 and current_frequency > self.min_frequency:
+        # Diagnostic logging for temp check
+        logger.debug(f"Checking temp: {temp}°C vs target {self.target_temp}°C, current_freq={current_frequency}MHz")
+
+        # Strictly enforce temperature and power limits
+        if temp > self.target_temp:
+            if current_frequency > self.min_frequency:
                 new_frequency = current_frequency - self.frequency_step
-                logger.info(f"Reducing frequency to {new_frequency}MHz due to multiple hashrate drops")
+                logger.info(f"Reducing frequency to {new_frequency}MHz due to temperature exceeding target ({temp}°C > {self.target_temp}°C) | ASIC Model={asic_model}, Power={power}W, Hashrate={hashrate}GH/s")
+                self.last_hashrate = hashrate
+                return new_voltage, new_frequency
+            elif current_voltage > self.min_voltage:
+                new_voltage = current_voltage - self.voltage_step
+                logger.info(f"Reducing voltage to {new_voltage}mV due to temperature exceeding target and frequency at minimum | ASIC Model={asic_model}, Temp={temp}°C, Power={power}W, Hashrate={hashrate}GH/s")
+                self.last_hashrate = hashrate
+                return new_voltage, new_frequency
+            else:
+                logger.info(f"Cannot reduce further due to temperature exceeding target ({temp}°C > {self.target_temp}°C) - at min frequency and voltage | ASIC Model={asic_model}, Power={power}W, Hashrate={hashrate}GH/s")
+                self.last_hashrate = hashrate
+                return new_voltage, new_frequency
+        elif power > self.power_limit * 1.075:
+            if current_voltage > self.min_voltage:
+                new_voltage = current_voltage - self.voltage_step
+                logger.info(f"Reducing voltage to {new_voltage}mV due to power exceeding limit ({power}W > {self.power_limit * 1.075}W) | ASIC Model={asic_model}, Temp={temp}°C, Hashrate={hashrate}GH/s")
+                self.last_hashrate = hashrate
+                return new_voltage, new_frequency
+            else:
+                logger.info(f"Cannot reduce further due to power exceeding limit ({power}W > {self.power_limit * 1.075}W) - at min voltage | ASIC Model={asic_model}, Temp={temp}°C, Hashrate={hashrate}GH/s")
+                self.last_hashrate = hashrate
+                return new_voltage, new_frequency
+
+        # Proceed to hashrate optimization only if temp and power are within limits
+        if hashrate < self.pid_freq.setpoint:
+            if self.drop_count >= 30 and current_frequency > self.min_frequency:
+                new_frequency = current_frequency - self.frequency_step
+                logger.info(f"Reducing frequency to {new_frequency}MHz due to multiple hashrate drops (drop_count={self.drop_count}) | ASIC Model={asic_model}, Temp={temp}°C, Power={power}W, Hashrate={hashrate}GH/s")
             else:
                 if hashrate < 0.85 * self.pid_freq.setpoint and current_voltage < self.max_voltage:
                     new_voltage = min(proposed_voltage, current_voltage + self.voltage_step)
-                    logger.info(f"Increasing voltage to {new_voltage}mV due to severe hashrate drop ({hashrate} < {0.85 * self.pid_freq.setpoint})")
-                # No FREQ_ADJUST_VOLTAGE_THRESHOLD check anymore
+                    logger.info(f"Increasing voltage to {new_voltage}mV due to severe hashrate drop ({hashrate} < {0.85 * self.pid_freq.setpoint}) | ASIC Model={asic_model}, Temp={temp}°C, Power={power}W")
                 new_frequency = proposed_frequency
-                logger.info(f"Adjusting frequency to {new_frequency}MHz based on PID output")
+                logger.info(f"Adjusting frequency to {new_frequency}MHz based on PID output | ASIC Model={asic_model}, Temp={temp}°C, Power={power}W, Hashrate={hashrate}GH/s")
                 if current_frequency >= self.max_frequency and current_voltage < self.max_voltage:
                     new_voltage = current_voltage + self.voltage_step
-                    logger.info(f"Increasing voltage to {new_voltage}mV as frequency is at maximum")
+                    logger.info(f"Increasing voltage to {new_voltage}mV as frequency is at maximum | ASIC Model={asic_model}, Temp={temp}°C, Power={power}W, Hashrate={hashrate}GH/s")
         else:
-            logger.info("System stable, maintaining settings")
+            logger.info(f"System stable, maintaining settings: Voltage={current_voltage}mV, Frequency={new_frequency}MHz | ASIC Model={asic_model}, Temp={temp}°C, Power={power}W, Hashrate={hashrate}GH/s")
 
         self.last_hashrate = hashrate
         return new_voltage, new_frequency
+
 
 class TempWatchTuningStrategy:
     def __init__(self, min_voltage: float, min_frequency: float, voltage_step: float, frequency_step: float, target_temp: float):
@@ -454,6 +474,7 @@ def load_yaml_config(path: str) -> dict:
         logger.error(f"Failed to load configuration file: {e}")
         sys.exit(1)
 
+
 def main():
     args = parse_arguments()
 
@@ -468,10 +489,29 @@ def main():
 
     config = DEFAULTS.copy()
     if args.config:
-        yaml_config = load_yaml_config(args.config)
-        if yaml_config:
-            config.update(yaml_config)
-            logger.info(f"Loaded configuration from {args.config}")
+        try:
+            with open(args.config, "r") as f:
+                yaml_config = yaml.safe_load(f)
+            if yaml_config is None:
+                logger.error(f"Failed to parse YAML config file {args.config}: Empty or invalid content")
+            else:
+                logger.info(f"Loading configuration from file: {args.config}")
+                logger.debug(f"Raw YAML config loaded: {yaml_config}")
+                
+                # Log differences from defaults if debug level is enabled
+                if logging.getLogger().isEnabledFor(logging.DEBUG):
+                    diverged = {k: v for k, v in yaml_config.items() if k in DEFAULTS and v != DEFAULTS[k]}
+                    if diverged:
+                        logger.debug(f"Values diverging from defaults: {diverged}")
+                    else:
+                        logger.debug("No values diverge from defaults in YAML config")
+                
+                config.update(yaml_config)
+                logger.debug(f"Config target_temp after YAML load: {config['TARGET_TEMP']}")
+        except FileNotFoundError:
+            logger.error(f"Config file {args.config} not found, using defaults")
+        except Exception as e:
+            logger.error(f"Failed to load YAML config file {args.config}: {e}", exc_info=True)
 
     # Settings priorities: CLI args > YAML config > defaults
     initial_voltage = args.voltage if args.voltage is not None else config["INITIAL_VOLTAGE"]
@@ -480,6 +520,9 @@ def main():
     sample_interval = args.interval if args.interval is not None else config["SAMPLE_INTERVAL"]
     power_limit = args.power_limit if args.power_limit is not None else config["POWER_LIMIT"]
     setpoint = args.setpoint if args.setpoint is not None else config["HASHRATE_SETPOINT"]
+    
+    logger.debug(f"Final target_temp used: {target_temp}")
+    logger.debug(f"Final hashrate_setpoint used: {setpoint}")
 
     snapshot_manager = JsonSnapshotManager(
         config.get("SNAPSHOT_FILE", SNAPSHOT_FILE),
@@ -492,7 +535,7 @@ def main():
     initial_frequency = initial_frequency if args.frequency else frequency_from_snapshot
 
     hardware_gateway = BitaxeAPI(
-        args.ip,  # <-- notice here we now use args.ip from your --ip argument
+        args.ip,
         config["MIN_VOLTAGE"],
         config["MAX_VOLTAGE"],
         config["MIN_FREQUENCY"],
@@ -542,6 +585,6 @@ def main():
     finally:
         use_case.stop()
         logger.info("Exiting monitor")
-
+        
 if __name__ == "__main__":
     main()  
