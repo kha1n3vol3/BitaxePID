@@ -19,3 +19,7 @@ PID_VOLT_KI: 0.01
 PID_VOLT_KD: 0.02
 LOG_FILE: "bitaxepid_tuning_log_BM1370.csv"
 SNAPSHOT_FILE: "bitaxepid_snapshot_BM1370.json"
+#PRIMARY_STRATUM:
+#  endpoint: "stratum+tcp://solo.ckpool.org:3333"
+#BACKUP_STRATUM:
+#  endpoint: "stratum+tcp://datafree.mine.ocean.xyz:3404"
