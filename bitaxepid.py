@@ -621,6 +621,8 @@ class TuneBitaxeUseCase:
         self.current_frequency = initial_frequency
         self.pools_file = pools_file
         self.config = config
+        # Fetch stratum info once during initialization
+        self.stratum_info = get_top_pools(self.config, self.pools_file)
         self.hardware_gateway.set_settings(self.current_voltage, self.current_frequency)
 
     def start(self) -> None:
@@ -637,8 +639,8 @@ class TuneBitaxeUseCase:
             power = info.get("power", 0)
             timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
             self.logger.log(timestamp, self.current_frequency, self.current_voltage, hashrate, temp)
-            stratum_info = get_top_pools(self.config, self.pools_file)
-            self.presenter.update(info, hashrate, stratum_info)
+            # Use the pre-fetched stratum_info instead of calling get_top_pools again
+            self.presenter.update(info, hashrate, self.stratum_info)
             new_voltage, new_frequency = self.tuning_strategy.adjust(self.current_voltage, self.current_frequency, temp, hashrate, power)
             self.current_voltage = new_voltage
             self.current_frequency = self.hardware_gateway.set_settings(new_voltage, new_frequency)
@@ -715,6 +717,8 @@ def main() -> None:
     config = DEFAULTS.copy()
     if args.config:
         config.update(load_yaml_config(args.config))
+    # print("Loaded config:", config)
+        
 
     initial_voltage = args.voltage if args.voltage is not None else config["INITIAL_VOLTAGE"]
     initial_frequency = args.frequency if args.frequency is not None else config["INITIAL_FREQUENCY"]
