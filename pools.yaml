@@ -1,0 +1,43 @@
+- endpoint: stratum+tcp://solo.ckpool.org:3333
+  fee: 2%
+  www: https://solo.ckpool.org/
+
+- endpoint: stratum+tcp://eusolo.ckpool.org:3333
+  fee: 2%
+  www: https://solo.ckpool.org/
+
+- endpoint: stratum+tcp://solo.stratum.braiins.com:3333
+  fee: 2.5%
+  www: https://academy.braiins.com/en/braiins-pool/rewards-and-payouts/
+
+- endpoint: stratum+tcp://public-pool.io:21496
+  fee: 0%
+  www: https://web.public-pool.io/
+
+- endpoint: stratum+tcp://solo.solohash.co.uk:3333
+  fee: 0.5%
+  www: https://solohash.co.uk/pool/bitcoin-solo
+
+- endpoint: stratum+tcp://btc.viabtc.io:3333
+  fee: 0%
+  www: https://support.viabtc.com/hc/en-us/articles/7207401012879-BTC-Mining
+
+- endpoint: stratum+tcp://datafree.mine.ocean.xyz:3404
+  fee: 2%
+  www: https://ocean.xyz/
+
+- endpoint: stratum+tcp://stratum.kano.is:3333
+  fee: 0.9%
+  www: https://kano.is/
+
+- endpoint: stratum+tcp://stratum.antpool.com:3333
+  fee: 1%
+  www: https://www.antpool.com/
+
+- endpoint: stratum+tcp://btc.global.luxor.tech:700
+  fee: 2%
+  www: https://www.luxor.tech/mining/coins/btc
+
+- endpoint: stratum+tcp://eu3.solopool.org:8003
+  fee: 1.5%
+  www: https://btc.solopool.org/
