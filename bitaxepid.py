@@ -91,53 +91,54 @@ def get_top_pools(config: Dict[str, Any], pools_file: str = "pools.yaml") -> Lis
     """
     Retrieve the two stratum endpoints, prioritizing user overrides from config.
 
-    Checks the config for user-specified PRIMARY_STRATUM and BACKUP_STRATUM.
-    Overrides in the configuration are now provided as a single endpoint string (including port).
-    If not fully overridden, falls back to the lowest-latency pools from pools.py.
+    If PRIMARY_STRATUM or BACKUP_STRATUM are in config, use them exclusively.
+    Otherwise, fall back to the lowest-latency pools from pools.py.
 
     Args:
         config (Dict[str, Any]): Loaded configuration dictionary from YAML.
         pools_file (str): Path to the pools YAML file. Defaults to 'pools.yaml'.
 
     Returns:
-        List[Dict[str, Any]]: List of up to two dictionaries with 'endpoint' and 'port' keys.
+        List[Dict[str, Any]]: List of up to two dictionaries with 'endpoint', 'port', and optionally 'user'.
     """
     stratum_info: List[Dict[str, Any]] = []
 
-    # Check for user overrides in config (using a single 'endpoint' string)
+    # Check for user overrides in config
     primary = config.get("PRIMARY_STRATUM")
     backup = config.get("BACKUP_STRATUM")
-    if primary and "endpoint" in primary:
-        hostname, port = parse_endpoint(primary["endpoint"])
-        stratum_info.append({"endpoint": hostname, "port": port})
-    if backup and "endpoint" in backup:
-        hostname, port = parse_endpoint(backup["endpoint"])
-        stratum_info.append({"endpoint": hostname, "port": port})
 
-    # Fill remaining slots with pools.py results if needed
-    if len(stratum_info) < 2:
-        try:
-            auto_pools = load_pools(pools_file)
-            results: List[Dict[str, Any]] = []
-            for pool in auto_pools:
-                # Handle pools where only an 'endpoint' key is provided.
-                if "endpoint" in pool and "port" not in pool:
-                    hostname, port = parse_endpoint(pool["endpoint"])
-                else:
-                    hostname = pool["endpoint"]
-                    port = pool["port"]
-                latency = measure_latency(hostname, port)
-                results.append({"endpoint": hostname, "port": port, "latency": latency})
-            results.sort(key=lambda x: x["latency"])
-            top_auto = [res for res in results if res["latency"] < float('inf')][:2 - len(stratum_info)]
-            stratum_info.extend([{"endpoint": res["endpoint"], "port": res["port"]} for res in top_auto])
-        except (FileNotFoundError, yaml.YAMLError) as e:
-            logger.error(f"Failed to load pools from {pools_file}: {e}")
-        except Exception as e:
-            logger.error(f"Unexpected error fetching pools: {e}")
+    if primary:
+        hostname, port = parse_endpoint(primary.get("endpoint") if isinstance(primary, dict) else primary)
+        stratum_info.append({"endpoint": hostname, "port": port, "user": primary.get("user", "")})
+    if backup:
+        hostname, port = parse_endpoint(backup.get("endpoint") if isinstance(backup, dict) else backup)
+        stratum_info.append({"endpoint": hostname, "port": port, "user": backup.get("user", "")})
+
+    # If config provides both, return early
+    if len(stratum_info) == 2 or (primary and not backup):
+        return stratum_info[:2]
+
+    # Otherwise, fill remaining slots with pools.py results
+    try:
+        auto_pools = load_pools(pools_file)
+        results: List[Dict[str, Any]] = []
+        for pool in auto_pools:
+            if "endpoint" in pool and "port" not in pool:
+                hostname, port = parse_endpoint(pool["endpoint"])
+            else:
+                hostname = pool["endpoint"]
+                port = pool["port"]
+            latency = measure_latency(hostname, port)
+            results.append({"endpoint": hostname, "port": port, "latency": latency, "user": pool.get("user", "")})
+        results.sort(key=lambda x: x["latency"])
+        top_auto = [res for res in results if res["latency"] < float('inf')][:2 - len(stratum_info)]
+        stratum_info.extend([{"endpoint": res["endpoint"], "port": res["port"], "user": res["user"]} for res in top_auto])
+    except (FileNotFoundError, yaml.YAMLError) as e:
+        logger.error(f"Failed to load pools from {pools_file}: {e}")
+    except Exception as e:
+        logger.error(f"Unexpected error fetching pools: {e}")
 
     return stratum_info[:2]
-
 
 # --- Domain Layer Protocols and Implementations ---
 
@@ -311,8 +312,38 @@ class HardwareGateway(Protocol):
         pass
 
 class BitaxeAPI:
-    """Interface to Bitaxe miner hardware via HTTP API."""
 
+    def set_stratum(self, primary: Dict[str, Any], backup: Dict[str, Any]) -> bool:
+        """
+        Set the primary and backup stratum endpoints on the miner.
+
+        Args:
+            primary (Dict[str, Any]): Dict with 'endpoint', 'port', and optionally 'user'.
+            backup (Dict[str, Any]): Dict with 'endpoint', 'port', and optionally 'user'.
+
+        Returns:
+            bool: True if successful, False otherwise.
+        """
+        settings = {
+            "stratumURL": primary["endpoint"],
+            "stratumPort": primary["port"],
+            "fallbackStratumURL": backup["endpoint"],
+            "fallbackStratumPort": backup["port"],
+        }
+        if primary.get("user"):
+            settings["stratumUser"] = primary["user"]
+        if backup.get("user"):
+            settings["fallbackStratumUser"] = backup["user"]
+
+        try:
+            response = requests.patch(f"{self.bitaxepid_url}/api/system", json=settings, timeout=10)
+            response.raise_for_status()
+            logger.info(f"Set stratum: Primary={primary['endpoint']}:{primary['port']}, Backup={backup['endpoint']}:{backup['port']}")
+            return True
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error setting stratum endpoints: {e}")
+            return False
+                
     def __init__(self, bitaxepid_ip: str, min_voltage: float, max_voltage: float, min_frequency: float, max_frequency: float, frequency_step: float) -> None:
         """
         Initialize the Bitaxe API client.
@@ -502,21 +533,60 @@ class TUIPresenter:
         layout["main"].split_row(Layout(name="stats", ratio=1), Layout(name="progress", ratio=2))
         return layout
 
+class TUIPresenter:
+    """Rich-based terminal UI presenter for real-time monitoring."""
+
+    def __init__(self) -> None:
+        """Initialize the TUI with a layout and live display."""
+        self.log_messages: List[str] = []
+        self.layout = self.create_layout()
+        self.live = Live(self.layout, console=console, refresh_per_second=1)
+        self.live.start()
+
+    def create_layout(self) -> Layout:
+        """
+        Create the TUI layout structure.
+
+        Returns:
+            Layout: A rich Layout object with defined sections.
+        """
+        layout = Layout()
+        layout.split_column(Layout(name="top", size=15), Layout(name="bottom", ratio=1))
+        layout["top"].split_row(Layout(name="hashrate", ratio=3), Layout(name="header", ratio=2))
+        layout["bottom"].split_column(Layout(name="main", ratio=1), Layout(name="log", size=10))
+        layout["main"].split_row(Layout(name="stats", ratio=1), Layout(name="progress", ratio=2))
+        return layout
+
     def update(self, info: Dict[str, Any], hashrate: float, stratum_info: List[Dict[str, Any]]) -> None:
         """
-        Update the TUI with current system metrics and stratum information.
+        Update the TUI with current system metrics from the API.
 
         Args:
-            info (Dict[str, Any]): System metrics from the miner.
-            hashrate (float): Current hashrate in GH/s.
-            stratum_info (List[Dict[str, Any]]): List of stratum endpoints and ports.
+            info (Dict[str, Any]): System metrics from the miner API (/api/system/info).
+            hashrate (float): Current hashrate in GH/s (from info["hashRate"]).
+            stratum_info (List[Dict[str, Any]]): Unused for display, kept for compatibility.
         """
+        # Extract data from info dict with fallbacks
         temp = info.get("temp", "N/A")
         power = info.get("power", 0)
         hostname = info.get("hostname", "Unknown")
         frequency = info.get("frequency", 0)
         core_voltage = info.get("coreVoltageActual", 0)
         voltage = info.get("voltage", 0)
+        current = info.get("current", 0)
+        fan_rpm = info.get("fanrpm", 0)
+        asic_model = info.get("ASICModel", "N/A")
+        best_diff = info.get("bestDiff", "N/A")
+
+        # Stratum data from API
+        primary_url = info.get("stratumURL", "N/A")
+        primary_port = info.get("stratumPort", "N/A")
+        backup_url = info.get("fallbackStratumURL", "N/A")
+        backup_port = info.get("fallbackStratumPort", "N/A")
+
+        # Debug logging to verify stratum values
+        logger.debug(f"TUI update - Primary stratum: {primary_url}:{primary_port}")
+        logger.debug(f"TUI update - Backup stratum: {backup_url}:{backup_port}")
 
         # Hashrate Panel
         hashrate_str = f"{hashrate:.0f} GH/s"
@@ -530,11 +600,11 @@ class TUIPresenter:
         header_table.add_column("Value", style=f"bold {TEXT_COLOR}")
         power_str = f"{power:.2f}W" + (f" [{WARNING_COLOR}](OVER LIMIT)[/]" if power > DEFAULTS["POWER_LIMIT"] else "")
         header_table.add_row("Power", power_str)
-        header_table.add_row("Current", f"{info.get('current', 0):.2f}mA")
+        header_table.add_row("Current", f"{current:.2f}mA")
         header_table.add_row("Core Voltage", f"{core_voltage:.2f}mV")
         header_table.add_row("Voltage", f"{voltage:.0f}mV")
-        primary_stratum = f"{stratum_info[0]['endpoint']}:{stratum_info[0]['port']}" if stratum_info else "N/A"
-        backup_stratum = f"{stratum_info[1]['endpoint']}:{stratum_info[1]['port']}" if len(stratum_info) > 1 else "N/A"
+        primary_stratum = f"{primary_url}:{primary_port}"
+        backup_stratum = f"{backup_url}:{backup_port}"
         header_table.add_row("Primary Stratum", primary_stratum)
         header_table.add_row("Backup Stratum", backup_stratum)
         self.layout["header"].update(Panel(header_table, style=f"on {BACKGROUND}", border_style=PRIMARY_ACCENT))
@@ -544,9 +614,9 @@ class TUIPresenter:
         stats_table.add_column("Parameter", style=f"bold {TABLE_HEADER}")
         stats_table.add_column("Value", style=f"bold {TEXT_COLOR}")
         stats = {
-            "ASIC Model": info.get("ASICModel", "N/A"),
-            "Best Diff": info.get("bestDiff", "N/A"),
-            "Fan RPM": f"{info.get('fanrpm', 0):.0f}",
+            "ASIC Model": asic_model,
+            "Best Diff": best_diff,
+            "Fan RPM": f"{fan_rpm:.0f}",
             "Frequency": f"{frequency:.2f}MHz",
             "Hashrate": f"{hashrate:.2f} GH/s",
             "Temperature": f"{temp if temp == 'N/A' else float(temp):.2f}°C"
@@ -573,6 +643,7 @@ class TUIPresenter:
         log_text = Text("\n".join(self.log_messages), style=f"{TEXT_COLOR} on {BACKGROUND}")
         self.layout["log"].update(Panel(log_text, title="Log", border_style=PRIMARY_ACCENT, style=f"on {BACKGROUND}"))
 
+
 class NullPresenter:
     """No-op presenter for console-only logging."""
 
@@ -590,26 +661,9 @@ class NullPresenter:
 # --- Application Layer ---
 
 class TuneBitaxeUseCase:
-    """Core use case for tuning the Bitaxe miner."""
-
     def __init__(self, tuning_strategy: TuningStrategy, hardware_gateway: HardwareGateway, logger: Logger,
                  snapshot_manager: SnapshotManager, presenter: Presenter, sample_interval: float,
                  initial_voltage: float, initial_frequency: float, pools_file: str, config: Dict[str, Any]) -> None:
-        """
-        Initialize the tuning use case.
-
-        Args:
-            tuning_strategy (TuningStrategy): Strategy for adjusting settings.
-            hardware_gateway (HardwareGateway): Interface to miner hardware.
-            logger (Logger): Logging mechanism for metrics.
-            snapshot_manager (SnapshotManager): Manager for persisting settings.
-            presenter (Presenter): UI or logging presenter.
-            sample_interval (float): Sampling interval in seconds.
-            initial_voltage (float): Initial voltage in mV.
-            initial_frequency (float): Initial frequency in MHz.
-            pools_file (str): Path to pools YAML file.
-            config (Dict[str, Any]): Configuration dictionary from YAML.
-        """
         self.tuning_strategy = tuning_strategy
         self.hardware_gateway = hardware_gateway
         self.logger = logger
@@ -621,14 +675,45 @@ class TuneBitaxeUseCase:
         self.current_frequency = initial_frequency
         self.pools_file = pools_file
         self.config = config
-        # Fetch stratum info once during initialization
-        self.stratum_info = get_top_pools(self.config, self.pools_file)
+
+        # Fetch and set stratum endpoints
+        stratum_info = get_top_pools(self.config, self.pools_file)
+        if len(stratum_info) < 2:
+            logger.warning("Less than two stratum endpoints available, duplicating or using defaults")
+            if stratum_info:
+                stratum_info.append(stratum_info[0])
+            else:
+                stratum_info = [
+                    {"endpoint": "solo.ckpool.org", "port": 3333, "user": ""},
+                    {"endpoint": "datafree.mine.ocean.xyz", "port": 3404, "user": ""}
+                ]
+
+        if not self.hardware_gateway.set_stratum(stratum_info[0], stratum_info[1]):
+            logger.error("Failed to set stratum endpoints, proceeding with existing settings")
         self.hardware_gateway.set_settings(self.current_voltage, self.current_frequency)
 
     def start(self) -> None:
-        """
-        Start the tuning loop, adjusting settings and updating the UI/logging.
-        """
+        while self.running:
+            info = self.hardware_gateway.get_system_info()
+            if info is None:
+                logger.warning("Failed to fetch system info, skipping update")
+                time.sleep(self.sample_interval)
+                continue
+            # Log the full info dict to verify stratum values
+            logger.debug(f"System info from API: {json.dumps(info, indent=2)}")
+            temp = float(info.get("temp", "N/A")) if info.get("temp", "N/A") != "N/A" else DEFAULTS["TARGET_TEMP"] + 1
+            hashrate = info.get("hashRate", 0)
+            power = info.get("power", 0)
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            self.logger.log(timestamp, self.current_frequency, self.current_voltage, hashrate, temp)
+            self.presenter.update(info, hashrate, [])
+            new_voltage, new_frequency = self.tuning_strategy.adjust(self.current_voltage, self.current_frequency, temp, hashrate, power)
+            self.current_voltage = new_voltage
+            self.current_frequency = self.hardware_gateway.set_settings(new_voltage, new_frequency)
+            self.snapshot_manager.save(self.current_voltage, self.current_frequency)
+            time.sleep(self.sample_interval)
+
+    def start(self) -> None:
         while self.running:
             info = self.hardware_gateway.get_system_info()
             if info is None:
@@ -639,8 +724,7 @@ class TuneBitaxeUseCase:
             power = info.get("power", 0)
             timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
             self.logger.log(timestamp, self.current_frequency, self.current_voltage, hashrate, temp)
-            # Use the pre-fetched stratum_info instead of calling get_top_pools again
-            self.presenter.update(info, hashrate, self.stratum_info)
+            self.presenter.update(info, hashrate, [])  # No stratum_info needed for TUI
             new_voltage, new_frequency = self.tuning_strategy.adjust(self.current_voltage, self.current_frequency, temp, hashrate, power)
             self.current_voltage = new_voltage
             self.current_frequency = self.hardware_gateway.set_settings(new_voltage, new_frequency)
