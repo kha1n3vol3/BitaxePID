@@ -1,0 +1,2 @@
+stratumUser: bc1qx6uqjyddpyx6f0kw79d040geepqtyjef6at9ud.bitaxepid # if system api is blank load from file or commandline. no user no hashing.
+fallbackStratumUser: bc1qx6uqjyddpyx6f0kw79d040geepqtyjef6at9ud.bitaxepid # update as needed.

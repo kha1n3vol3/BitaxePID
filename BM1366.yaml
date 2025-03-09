@@ -1,13 +1,13 @@
 # BM1366.yaml
-initial_frequency: 485       # "485 (default)" from BM1366DropdownFrequency
-min_frequency: 400           # lowest available frequency in BM1366DropdownFrequency
-max_frequency: 575           # highest available frequency in BM1366DropdownFrequency
-initial_voltage: 1200        # "1200 (default)" from BM1366CoreVoltage
-min_voltage: 1100            # lowest available voltage in BM1366CoreVoltage
-max_voltage: 1300            # highest available voltage in BM1366CoreVoltage
+INITIAL_FREQUENCY: 485       # "485 (default)" from BM1366DropdownFrequency
+MIN_FREQUENCY: 400           # lowest available frequency in BM1366DropdownFrequency
+MAX_FREQUENCY: 575           # highest available frequency in BM1366DropdownFrequency
+INITIAL_VOLTAGE: 1200        # "1200 (default)" from BM1366CoreVoltage
+MIN_VOLTAGE: 1100            # lowest available voltage in BM1366CoreVoltage
+MAX_VOLTAGE: 1300            # highest available voltage in BM1366CoreVoltage
 FREQUENCY_STEP: 25
 VOLTAGE_STEP: 10
-TARGET_TEMP: 45.0
+TARGET_TEMP: 55.0
 SAMPLE_INTERVAL: 5
 POWER_LIMIT: 15.0
 HASHRATE_SETPOINT: 500
@@ -19,7 +19,6 @@ PID_VOLT_KI: 0.01
 PID_VOLT_KD: 0.02
 LOG_FILE: "bitaxepid_tuning_log_BM1366.csv"
 SNAPSHOT_FILE: "bitaxepid_snapshot_BM1366.json"
-#PRIMARY_STRATUM:
-#  endpoint: "stratum+tcp://solo.ckpool.org:3333"
-#BACKUP_STRATUM:
-#  endpoint: "stratum+tcp://datafree.mine.ocean.xyz:3404"
+POOLS_FILE: "pools.yaml"     # Added this required setting
+# Primary_Stratum: "stratum+tcp://solo.ckpool.org:3333"
+# Backup_Stratum: "stratum+tcp://datafree.mine.ocean.xyz:3404"

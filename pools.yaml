@@ -1,27 +1,36 @@
 - endpoint: stratum+tcp://solo.ckpool.org:3333
   fee: 2%
   www: https://solo.ckpool.org/
-
+  latency: 96.2456464767456
+  port: 3333
+  last_tested: '2025-03-09 15:39:46'
 - endpoint: stratum+tcp://eusolo.ckpool.org:3333
   fee: 2%
-  www: https://solo.ckpool.org/
-
+  www: https://eusolo.ckpool.org/
+  latency: 123.68857860565186
+  port: 3333
+  last_tested: '2025-03-09 15:39:52'
 - endpoint: stratum+tcp://solo.stratum.braiins.com:3333
   fee: 2.5%
   www: https://academy.braiins.com/en/braiins-pool/rewards-and-payouts/
-
+  latency: 124.79996681213379
+  port: 3333
+  last_tested: '2025-03-09 15:39:59'
 - endpoint: stratum+tcp://public-pool.io:21496
   fee: 0%
   www: https://web.public-pool.io/
-
+  latency: 86.3029956817627
+  port: 21496
+  last_tested: '2025-03-09 15:40:05'
 - endpoint: stratum+tcp://solo.solohash.co.uk:3333
   fee: 0.5%
   www: https://solohash.co.uk/pool/bitcoin-solo
-
-- endpoint: stratum+tcp://datafree.mine.ocean.xyz:3404
-  fee: 2%
-  www: https://ocean.xyz/
-
+  latency: 1129.4440031051636
+  port: 3333
+  last_tested: '2025-03-09 15:40:28'
 - endpoint: stratum+tcp://eu3.solopool.org:8003
   fee: 1.5%
   www: https://btc.solopool.org/
+  latency: 125.63049793243408
+  port: 8003
+  last_tested: '2025-03-09 15:40:40'
