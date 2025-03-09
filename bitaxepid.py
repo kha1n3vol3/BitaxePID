@@ -13,6 +13,8 @@ from rich.console import Console
 import yaml
 console = Console()
 
+__version__ = "1.0.0"
+
 class TuningManager:
     def __init__(
         self,
@@ -228,9 +230,12 @@ def parse_stratum(url: str) -> Dict[str, Any]:
         raise ValueError(f"Invalid stratum scheme: {parsed.scheme}. Use 'stratum+tcp://host:port'")
     return {"endpoint": parsed.hostname, "port": parsed.port}
 
+
+
 def parse_arguments() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="BitaxePID Auto-Tuner")
+    parser.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
     parser.add_argument("--ip", required=True, type=str, help="IP address of the Bitaxe miner")
     parser.add_argument("--config", type=str, help="Path to optional user YAML configuration file")
     parser.add_argument("--user-file", type=str, default="user.yaml", help="Path to user YAML file for stratum users (default: user.yaml)")
