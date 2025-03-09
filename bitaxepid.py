@@ -1,878 +1,393 @@
-#!/usr/bin/env python3
-"""
-BitaxePID Auto-Tuner (Refactored)
-
-Automated tuning system for Bitaxe 601 Gamma Bitcoin miners (BM1366 ASIC), designed with clean architecture principles.
-Optimizes hashrate while respecting temperature and power constraints using PID or temp-watch tuning modes.
-Features include a terminal user interface (TUI), CSV logging, JSON snapshots, and integration with pool latency monitoring.
-Supports user-configurable stratum endpoints via YAML overrides, falling back to lowest-latency pools from pools.py.
-
-Usage:
-    Run with required IP address and optional configuration:
-    ```bash
-    python bitaxepid2.py --ip 192.168.68.111 [--config BM1366.yaml] [options]
-    ```
-
-Dependencies:
-    - Standard library: time, socket, yaml, etc.
-    - External: requests, rich, simple_pid, pyfiglet, pools.py (in same directory)
-"""
-
 import argparse
-import csv
-import json
 import logging
-import os
 import signal
 import sys
 import time
-from typing import Dict, Optional, Any, Tuple, Protocol, List
-import pyfiglet
-import requests
+import os
+from typing import Dict, Any, Optional, List
+from urllib.parse import urlparse
+from interfaces import IBitaxeAPIClient, ILogger, IConfigLoader, ITerminalUI, TuningStrategy
+from implementations import BitaxeAPIClient, Logger, YamlConfigLoader, RichTerminalUI, NullTerminalUI, PIDTuningStrategy
+from pools import get_fastest_pools, parse_endpoint
 from rich.console import Console
-from rich.layout import Layout
-from rich.panel import Panel
-from rich.progress import Progress, BarColumn, TextColumn
-from rich.table import Table
-from rich.text import Text
-from rich.live import Live
-from rich import box
-from simple_pid import PID
 import yaml
-from pools import load_pools, measure_latency, parse_endpoint
-
-# Color constants for Cyberdeck TUI theme
-BACKGROUND = "#121212"          # Dark background
-TEXT_COLOR = "#E0E0E0"          # Light text
-PRIMARY_ACCENT = "#39FF14"      # Neon green for highlights
-SECONDARY_ACCENT = "#00BFFF"    # Bright blue for secondary highlights
-WARNING_COLOR = "#FF9933"       # Orange for warnings
-ERROR_COLOR = "#FF0000"         # Red for errors
-DECORATIVE_COLOR = "#FF0099"    # Pink for decorative elements
-TABLE_HEADER = DECORATIVE_COLOR # Header color for tables
-TABLE_ROW_EVEN = "#222222"      # Dark gray for even rows
-TABLE_ROW_ODD = "#444444"       # Mid gray for odd rows
-PROGRESS_BAR_BG = "#333333"     # Gray for progress bar background
-
-# Default configuration values
-DEFAULTS: Dict[str, Any] = {
-    "INITIAL_VOLTAGE": 1200,
-    "INITIAL_FREQUENCY": 500,
-    "MIN_VOLTAGE": 1100,
-    "MAX_VOLTAGE": 1300,
-    "MIN_FREQUENCY": 400,
-    "MAX_FREQUENCY": 550,
-    "FREQUENCY_STEP": 25,
-    "VOLTAGE_STEP": 10,
-    "TARGET_TEMP": 45.0,
-    "SAMPLE_INTERVAL": 5,
-    "POWER_LIMIT": 15.0,
-    "HASHRATE_SETPOINT": 500,
-    "PID_FREQ_KP": 0.2,
-    "PID_FREQ_KI": 0.01,
-    "PID_FREQ_KD": 0.02,
-    "PID_VOLT_KP": 0.1,
-    "PID_VOLT_KI": 0.01,
-    "PID_VOLT_KD": 0.02,
-    "LOG_FILE": "bitaxepid_tuning_log.csv",
-    "SNAPSHOT_FILE": "bitaxepid_snapshot.json",
-    "POOLS_FILE": "pools.yaml"
-}
-
-SNAPSHOT_FILE = "bitaxepid_snapshot.json"
-LOG_FILE = "bitaxepid_tuning_log.csv"
-
 console = Console()
-logger = logging.getLogger(__name__)
 
-# --- Pool Integration Functions ---
-
-def get_top_pools(config: Dict[str, Any], pools_file: str = "pools.yaml") -> List[Dict[str, Any]]:
-    """
-    Retrieve the two stratum endpoints, prioritizing user overrides from config.
-
-    If PRIMARY_STRATUM or BACKUP_STRATUM are in config, use them exclusively.
-    Otherwise, fall back to the lowest-latency pools from pools.py.
-
-    Args:
-        config (Dict[str, Any]): Loaded configuration dictionary from YAML.
-        pools_file (str): Path to the pools YAML file. Defaults to 'pools.yaml'.
-
-    Returns:
-        List[Dict[str, Any]]: List of up to two dictionaries with 'endpoint', 'port', and optionally 'user'.
-    """
-    stratum_info: List[Dict[str, Any]] = []
-
-    # Check for user overrides in config
-    primary = config.get("PRIMARY_STRATUM")
-    backup = config.get("BACKUP_STRATUM")
-
-    if primary:
-        hostname, port = parse_endpoint(primary.get("endpoint") if isinstance(primary, dict) else primary)
-        stratum_info.append({"endpoint": hostname, "port": port, "user": primary.get("user", "")})
-    if backup:
-        hostname, port = parse_endpoint(backup.get("endpoint") if isinstance(backup, dict) else backup)
-        stratum_info.append({"endpoint": hostname, "port": port, "user": backup.get("user", "")})
-
-    # If config provides both, return early
-    if len(stratum_info) == 2 or (primary and not backup):
-        return stratum_info[:2]
-
-    # Otherwise, fill remaining slots with pools.py results
-    try:
-        auto_pools = load_pools(pools_file)
-        results: List[Dict[str, Any]] = []
-        for pool in auto_pools:
-            if "endpoint" in pool and "port" not in pool:
-                hostname, port = parse_endpoint(pool["endpoint"])
-            else:
-                hostname = pool["endpoint"]
-                port = pool["port"]
-            latency = measure_latency(hostname, port)
-            results.append({"endpoint": hostname, "port": port, "latency": latency, "user": pool.get("user", "")})
-        results.sort(key=lambda x: x["latency"])
-        top_auto = [res for res in results if res["latency"] < float('inf')][:2 - len(stratum_info)]
-        stratum_info.extend([{"endpoint": res["endpoint"], "port": res["port"], "user": res["user"]} for res in top_auto])
-    except (FileNotFoundError, yaml.YAMLError) as e:
-        logger.error(f"Failed to load pools from {pools_file}: {e}")
-    except Exception as e:
-        logger.error(f"Unexpected error fetching pools: {e}")
-
-    return stratum_info[:2]
-
-# --- Domain Layer Protocols and Implementations ---
-
-class TuningStrategy(Protocol):
-    def adjust(self, current_voltage: float, current_frequency: float, temp: float, hashrate: float, power: float) -> Tuple[float, float]:
-        """Adjust voltage and frequency based on current metrics."""
-        pass
-
-class PIDTuningStrategy:
-    """PID-based tuning strategy for optimizing hashrate within constraints."""
-
-    def __init__(self, kp_freq: float, ki_freq: float, kd_freq: float, kp_volt: float, ki_volt: float, kd_volt: float,
-                 min_voltage: float, max_voltage: float, min_frequency: float, max_frequency: float,
-                 voltage_step: float, frequency_step: float, setpoint: float, sample_interval: float,
-                 target_temp: float, power_limit: float) -> None:
-        """
-        Initialize the PID tuning strategy with control parameters.
-
-        Args:
-            kp_freq (float): Proportional gain for frequency PID.
-            ki_freq (float): Integral gain for frequency PID.
-            kd_freq (float): Derivative gain for frequency PID.
-            kp_volt (float): Proportional gain for voltage PID.
-            ki_volt (float): Integral gain for voltage PID.
-            kd_volt (float): Derivative gain for voltage PID.
-            min_voltage (float): Minimum allowed voltage in mV.
-            max_voltage (float): Maximum allowed voltage in mV.
-            min_frequency (float): Minimum allowed frequency in MHz.
-            max_frequency (float): Maximum allowed frequency in MHz.
-            voltage_step (float): Voltage adjustment step size in mV.
-            frequency_step (float): Frequency adjustment step size in MHz.
-            setpoint (float): Target hashrate in GH/s.
-            sample_interval (float): PID sample interval in seconds.
-            target_temp (float): Target temperature in °C.
-            power_limit (float): Power limit in watts.
-        """
-        self.pid_freq = PID(kp_freq, ki_freq, kd_freq, setpoint=setpoint, sample_time=sample_interval)
-        self.pid_freq.output_limits = (min_frequency, max_frequency)
-        self.pid_volt = PID(kp_volt, ki_volt, kd_volt, setpoint=setpoint, sample_time=sample_interval)
-        self.pid_volt.output_limits = (min_voltage, max_voltage)
-        self.min_voltage = min_voltage
-        self.max_voltage = max_voltage
-        self.min_frequency = min_frequency
-        self.max_frequency = max_frequency
-        self.voltage_step = voltage_step
-        self.frequency_step = frequency_step
-        self.target_temp = target_temp
-        self.power_limit = power_limit
-        self.last_hashrate: Optional[float] = None
-        self.stagnation_count = 0
-        self.drop_count = 0
-
-    def adjust(self, current_voltage: float, current_frequency: float, temp: float, hashrate: float, power: float) -> Tuple[float, float]:
-        """
-        Adjust voltage and frequency based on current system metrics using PID control.
-
-        Prioritizes temperature and power limits over hashrate optimization.
-
-        Args:
-            current_voltage (float): Current voltage in mV.
-            current_frequency (float): Current frequency in MHz.
-            temp (float): Current temperature in °C.
-            hashrate (float): Current hashrate in GH/s.
-            power (float): Current power consumption in watts.
-
-        Returns:
-            Tuple[float, float]: New (voltage, frequency) settings.
-        """
-        freq_output = self.pid_freq(hashrate)
-        volt_output = self.pid_volt(hashrate)
-        proposed_frequency = round(freq_output / self.frequency_step) * self.frequency_step
-        proposed_frequency = max(self.min_frequency, min(self.max_frequency, proposed_frequency))
-        proposed_voltage = round(volt_output / self.voltage_step) * self.voltage_step
-        proposed_voltage = max(self.min_voltage, min(self.max_voltage, proposed_voltage))
-
-        hashrate_dropped = self.last_hashrate is not None and hashrate < self.last_hashrate
-        stagnated = self.last_hashrate == hashrate
-        if hashrate_dropped:
-            self.drop_count += 1
-        else:
-            self.drop_count = 0
-        if stagnated:
-            self.stagnation_count += 1
-        else:
-            self.stagnation_count = 0
-
-        new_voltage = current_voltage
-        new_frequency = current_frequency
-
-        if temp > self.target_temp:
-            if current_frequency > self.min_frequency:
-                new_frequency = current_frequency - self.frequency_step
-                logger.info(f"Reducing frequency to {new_frequency}MHz due to temp {temp}°C > {self.target_temp}°C")
-            elif current_voltage > self.min_voltage:
-                new_voltage = current_voltage - self.voltage_step
-                logger.info(f"Reducing voltage to {new_voltage}mV due to temp {temp}°C > {self.target_temp}°C")
-        elif power > self.power_limit * 1.075:
-            if current_voltage > self.min_voltage:
-                new_voltage = current_voltage - self.voltage_step
-                logger.info(f"Reducing voltage to {new_voltage}mV due to power {power}W > {self.power_limit * 1.075}W")
-
-        elif hashrate < self.pid_freq.setpoint:
-            if self.drop_count >= 30 and current_frequency > self.min_frequency:
-                new_frequency = current_frequency - self.frequency_step
-                logger.info(f"Reducing frequency to {new_frequency}MHz due to repeated hashrate drops")
-            else:
-                if hashrate < 0.85 * self.pid_freq.setpoint and current_voltage < self.max_voltage:
-                    new_voltage = min(proposed_voltage, current_voltage + self.voltage_step)
-                    logger.info(f"Increasing voltage to {new_voltage}mV due to hashrate {hashrate} < {0.85 * self.pid_freq.setpoint}")
-                new_frequency = proposed_frequency
-                logger.info(f"Adjusting frequency to {new_frequency}MHz via PID")
-                if current_frequency >= self.max_frequency and current_voltage < self.max_voltage:
-                    new_voltage = current_voltage + self.voltage_step
-                    logger.info(f"Increasing voltage to {new_voltage}mV as frequency at max")
-        else:
-            logger.info(f"System stable at Voltage={current_voltage}mV, Frequency={new_frequency}MHz")
-
-        self.last_hashrate = hashrate
-        return new_voltage, new_frequency
-
-class TempWatchTuningStrategy:
-    """Simple temperature-based tuning strategy."""
-
-    def __init__(self, min_voltage: float, min_frequency: float, voltage_step: float, frequency_step: float, target_temp: float) -> None:
-        """
-        Initialize the temperature-watch tuning strategy.
-
-        Args:
-            min_voltage (float): Minimum allowed voltage in mV.
-            min_frequency (float): Minimum allowed frequency in MHz.
-            voltage_step (float): Voltage adjustment step size in mV.
-            frequency_step (float): Frequency adjustment step size in MHz.
-            target_temp (float): Target temperature in °C.
-        """
-        self.min_voltage = min_voltage
-        self.min_frequency = min_frequency
-        self.voltage_step = voltage_step
-        self.frequency_step = frequency_step
-        self.target_temp = target_temp
-
-    def adjust(self, current_voltage: float, current_frequency: float, temp: float, hashrate: float, power: float) -> Tuple[float, float]:
-        """
-        Adjust voltage and frequency based on temperature only.
-
-        Args:
-            current_voltage (float): Current voltage in mV.
-            current_frequency (float): Current frequency in MHz.
-            temp (float): Current temperature in °C.
-            hashrate (float): Current hashrate in GH/s (unused).
-            power (float): Current power in watts (unused).
-
-        Returns:
-            Tuple[float, float]: New (voltage, frequency) settings.
-        """
-        if temp > self.target_temp:
-            if current_frequency > self.min_frequency:
-                return current_voltage, current_frequency - self.frequency_step
-            elif current_voltage > self.min_voltage:
-                return current_voltage - self.voltage_step, current_frequency
-        return current_voltage, current_frequency
-
-# --- Infrastructure Layer ---
-
-class HardwareGateway(Protocol):
-    def get_system_info(self) -> Optional[Dict[str, Any]]:
-        """Fetch current system metrics."""
-        pass
-
-    def set_settings(self, voltage: float, frequency: float) -> float:
-        """Apply voltage and frequency settings."""
-        pass
-
-class BitaxeAPI:
-
-    def set_stratum(self, primary: Dict[str, Any], backup: Dict[str, Any]) -> bool:
-        """
-        Set the primary and backup stratum endpoints on the miner.
-
-        Args:
-            primary (Dict[str, Any]): Dict with 'endpoint', 'port', and optionally 'user'.
-            backup (Dict[str, Any]): Dict with 'endpoint', 'port', and optionally 'user'.
-
-        Returns:
-            bool: True if successful, False otherwise.
-        """
-        settings = {
-            "stratumURL": primary["endpoint"],
-            "stratumPort": primary["port"],
-            "fallbackStratumURL": backup["endpoint"],
-            "fallbackStratumPort": backup["port"],
-        }
-        if primary.get("user"):
-            settings["stratumUser"] = primary["user"]
-        if backup.get("user"):
-            settings["fallbackStratumUser"] = backup["user"]
-
-        try:
-            response = requests.patch(f"{self.bitaxepid_url}/api/system", json=settings, timeout=10)
-            response.raise_for_status()
-            logger.info(f"Set stratum: Primary={primary['endpoint']}:{primary['port']}, Backup={backup['endpoint']}:{backup['port']}")
-            return True
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error setting stratum endpoints: {e}")
-            return False
-                
-    def __init__(self, bitaxepid_ip: str, min_voltage: float, max_voltage: float, min_frequency: float, max_frequency: float, frequency_step: float) -> None:
-        """
-        Initialize the Bitaxe API client.
-
-        Args:
-            bitaxepid_ip (str): IP address of the Bitaxe miner.
-            min_voltage (float): Minimum allowed voltage in mV.
-            max_voltage (float): Maximum allowed voltage in mV.
-            min_frequency (float): Minimum allowed frequency in MHz.
-            max_frequency (float): Maximum allowed frequency in MHz.
-            frequency_step (float): Frequency adjustment step size in MHz.
-        """
-        self.bitaxepid_url = f"http://{bitaxepid_ip}"
-        self.min_voltage = min_voltage
-        self.max_voltage = max_voltage
-        self.min_frequency = min_frequency
-        self.max_frequency = max_frequency
-        self.frequency_step = frequency_step
-
-    def get_system_info(self) -> Optional[Dict[str, Any]]:
-        """
-        Retrieve system information from the Bitaxe miner.
-
-        Returns:
-            Optional[Dict[str, Any]]: System metrics or None if request fails.
-        """
-        try:
-            response = requests.get(f"{self.bitaxepid_url}/api/system/info", timeout=10)
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error fetching system info: {e}")
-            return None
-
-    def set_settings(self, voltage: float, frequency: float) -> float:
-        """
-        Apply specified voltage and frequency settings to the miner.
-
-        Args:
-            voltage (float): Desired voltage in mV.
-            frequency (float): Desired frequency in MHz.
-
-        Returns:
-            float: Applied frequency in MHz (may be adjusted to step boundary).
-        """
-        frequency = round(frequency / self.frequency_step) * self.frequency_step
-        frequency = max(self.min_frequency, min(self.max_frequency, frequency))
-        voltage = max(self.min_voltage, min(self.max_voltage, voltage))
-        settings = {"coreVoltage": voltage, "frequency": frequency}
-        try:
-            response = requests.patch(f"{self.bitaxepid_url}/api/system", json=settings, timeout=10)
-            response.raise_for_status()
-            logger.info(f"Applied settings: Voltage={voltage}mV, Frequency={frequency}MHz")
-            time.sleep(2)
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error setting system settings: {e}")
-        return frequency
-
-class Logger(Protocol):
-    def log(self, timestamp: str, frequency: float, voltage: float, hashrate: float, temp: float) -> None:
-        """Log tuning metrics."""
-        pass
-
-class CSVLogger:
-    """CSV-based logger for tuning metrics."""
-
-    def __init__(self, log_file: str) -> None:
-        """
-        Initialize the CSV logger.
-
-        Args:
-            log_file (str): Path to the CSV log file.
-        """
-        self.log_file = log_file
-
-    def log(self, timestamp: str, frequency: float, voltage: float, hashrate: float, temp: float) -> None:
-        """
-        Log a single entry of tuning metrics to CSV.
-
-        Args:
-            timestamp (str): Current timestamp (e.g., "2025-03-04 12:00:00").
-            frequency (float): Frequency in MHz.
-            voltage (float): Voltage in mV.
-            hashrate (float): Hashrate in GH/s.
-            temp (float): Temperature in °C.
-        """
-        file_exists = os.path.isfile(self.log_file)
-        with open(self.log_file, 'a', newline='') as csvfile:
-            fieldnames = ["timestamp", "frequency_mhz", "voltage_mv", "hashrate_ghs", "temperature_c"]
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            if not file_exists:
-                writer.writeheader()
-            writer.writerow({
-                "timestamp": timestamp,
-                "frequency_mhz": frequency,
-                "voltage_mv": voltage,
-                "hashrate_ghs": hashrate,
-                "temperature_c": temp
-            })
-
-class SnapshotManager(Protocol):
-    def load(self) -> Tuple[float, float]:
-        """Load previous voltage and frequency settings."""
-        pass
-
-    def save(self, voltage: float, frequency: float) -> None:
-        """Save current voltage and frequency settings."""
-        pass
-
-class JsonSnapshotManager:
-    """JSON-based snapshot manager for persisting settings."""
-
-    def __init__(self, snapshot_file: str, default_voltage: float, default_frequency: float) -> None:
-        """
-        Initialize the JSON snapshot manager.
-
-        Args:
-            snapshot_file (str): Path to the JSON snapshot file.
-            default_voltage (float): Default voltage in mV if snapshot is unavailable.
-            default_frequency (float): Default frequency in MHz if snapshot is unavailable.
-        """
-        self.snapshot_file = snapshot_file
-        self.default_voltage = default_voltage
-        self.default_frequency = default_frequency
-
-    def load(self) -> Tuple[float, float]:
-        """
-        Load the last saved voltage and frequency settings from JSON.
-
-        Returns:
-            Tuple[float, float]: (voltage, frequency) settings in mV and MHz.
-        """
-        if os.path.exists(self.snapshot_file):
-            try:
-                with open(self.snapshot_file, 'r') as f:
-                    snapshot = json.load(f)
-                    voltage = float(snapshot.get("voltage", self.default_voltage))
-                    frequency = float(snapshot.get("frequency", self.default_frequency))
-                    return voltage, frequency
-            except Exception as e:
-                logger.error(f"Failed to load snapshot: {e}")
-        return self.default_voltage, self.default_frequency
-
-    def save(self, voltage: float, frequency: float) -> None:
-        """
-        Save current voltage and frequency settings to JSON.
-
-        Args:
-            voltage (float): Voltage in mV to save.
-            frequency (float): Frequency in MHz to save.
-        """
-        snapshot = {"voltage": voltage, "frequency": frequency}
-        try:
-            with open(self.snapshot_file, 'w') as f:
-                json.dump(snapshot, f)
-        except Exception as e:
-            logger.error(f"Failed to save snapshot: {e}")
-
-# --- Presentation Layer ---
-
-class Presenter(Protocol):
-    def update(self, info: Dict[str, Any], hashrate: float, stratum_info: List[Dict[str, Any]]) -> None:
-        """Update the presentation layer with system info."""
-        pass
-
-class TUIPresenter:
-    """Rich-based terminal UI presenter for real-time monitoring."""
-
-    def __init__(self) -> None:
-        """Initialize the TUI with a layout and live display."""
-        self.log_messages: List[str] = []
-        self.layout = self.create_layout()
-        self.live = Live(self.layout, console=console, refresh_per_second=1)
-        self.live.start()
-
-    def create_layout(self) -> Layout:
-        """
-        Create the TUI layout structure.
-
-        Returns:
-            Layout: A rich Layout object with defined sections.
-        """
-        layout = Layout()
-        layout.split_column(Layout(name="top", size=15), Layout(name="bottom", ratio=1))
-        layout["top"].split_row(Layout(name="hashrate", ratio=3), Layout(name="header", ratio=2))
-        layout["bottom"].split_column(Layout(name="main", ratio=1), Layout(name="log", size=10))
-        layout["main"].split_row(Layout(name="stats", ratio=1), Layout(name="progress", ratio=2))
-        return layout
-
-class TUIPresenter:
-    """Rich-based terminal UI presenter for real-time monitoring."""
-
-    def __init__(self) -> None:
-        """Initialize the TUI with a layout and live display."""
-        self.log_messages: List[str] = []
-        self.layout = self.create_layout()
-        self.live = Live(self.layout, console=console, refresh_per_second=1)
-        self.live.start()
-
-    def create_layout(self) -> Layout:
-        """
-        Create the TUI layout structure.
-
-        Returns:
-            Layout: A rich Layout object with defined sections.
-        """
-        layout = Layout()
-        layout.split_column(Layout(name="top", size=15), Layout(name="bottom", ratio=1))
-        layout["top"].split_row(Layout(name="hashrate", ratio=3), Layout(name="header", ratio=2))
-        layout["bottom"].split_column(Layout(name="main", ratio=1), Layout(name="log", size=10))
-        layout["main"].split_row(Layout(name="stats", ratio=1), Layout(name="progress", ratio=2))
-        return layout
-
-    def update(self, info: Dict[str, Any], hashrate: float, stratum_info: List[Dict[str, Any]]) -> None:
-        """
-        Update the TUI with current system metrics from the API.
-
-        Args:
-            info (Dict[str, Any]): System metrics from the miner API (/api/system/info).
-            hashrate (float): Current hashrate in GH/s (from info["hashRate"]).
-            stratum_info (List[Dict[str, Any]]): Unused for display, kept for compatibility.
-        """
-        # Extract data from info dict with fallbacks
-        temp = info.get("temp", "N/A")
-        power = info.get("power", 0)
-        hostname = info.get("hostname", "Unknown")
-        frequency = info.get("frequency", 0)
-        core_voltage = info.get("coreVoltageActual", 0)
-        voltage = info.get("voltage", 0)
-        current = info.get("current", 0)
-        fan_rpm = info.get("fanrpm", 0)
-        asic_model = info.get("ASICModel", "N/A")
-        best_diff = info.get("bestDiff", "N/A")
-
-        # Stratum data from API
-        primary_url = info.get("stratumURL", "N/A")
-        primary_port = info.get("stratumPort", "N/A")
-        backup_url = info.get("fallbackStratumURL", "N/A")
-        backup_port = info.get("fallbackStratumPort", "N/A")
-
-        # Debug logging to verify stratum values
-        logger.debug(f"TUI update - Primary stratum: {primary_url}:{primary_port}")
-        logger.debug(f"TUI update - Backup stratum: {backup_url}:{backup_port}")
-
-        # Hashrate Panel
-        hashrate_str = f"{hashrate:.0f} GH/s"
-        ascii_art = pyfiglet.figlet_format(hashrate_str, font="ansi_regular")
-        hashrate_text = Text(ascii_art, style=f"{PRIMARY_ACCENT} on {BACKGROUND}")
-        self.layout["hashrate"].update(Panel(hashrate_text, title="Hashrate", border_style=PRIMARY_ACCENT, style=f"on {BACKGROUND}"))
-
-        # Header with Power and Stratum Info
-        header_table = Table(box=box.SIMPLE, style=DECORATIVE_COLOR, title=f"BitaxePID Auto-Tuner (Host: {hostname})")
-        header_table.add_column("Parameter", style=f"bold {DECORATIVE_COLOR}", justify="right")
-        header_table.add_column("Value", style=f"bold {TEXT_COLOR}")
-        power_str = f"{power:.2f}W" + (f" [{WARNING_COLOR}](OVER LIMIT)[/]" if power > DEFAULTS["POWER_LIMIT"] else "")
-        header_table.add_row("Power", power_str)
-        header_table.add_row("Current", f"{current:.2f}mA")
-        header_table.add_row("Core Voltage", f"{core_voltage:.2f}mV")
-        header_table.add_row("Voltage", f"{voltage:.0f}mV")
-        primary_stratum = f"{primary_url}:{primary_port}"
-        backup_stratum = f"{backup_url}:{backup_port}"
-        header_table.add_row("Primary Stratum", primary_stratum)
-        header_table.add_row("Backup Stratum", backup_stratum)
-        self.layout["header"].update(Panel(header_table, style=f"on {BACKGROUND}", border_style=PRIMARY_ACCENT))
-
-        # Stats Table
-        stats_table = Table(box=box.SIMPLE, style=TEXT_COLOR)
-        stats_table.add_column("Parameter", style=f"bold {TABLE_HEADER}")
-        stats_table.add_column("Value", style=f"bold {TEXT_COLOR}")
-        stats = {
-            "ASIC Model": asic_model,
-            "Best Diff": best_diff,
-            "Fan RPM": f"{fan_rpm:.0f}",
-            "Frequency": f"{frequency:.2f}MHz",
-            "Hashrate": f"{hashrate:.2f} GH/s",
-            "Temperature": f"{temp if temp == 'N/A' else float(temp):.2f}°C"
-        }
-        for i, (param, value) in enumerate(sorted(stats.items())):
-            row_style = TABLE_ROW_EVEN if i % 2 == 0 else TABLE_ROW_ODD
-            stats_table.add_row(param, str(value), style=f"on {row_style}")
-        self.layout["stats"].update(Panel(stats_table, title="System Stats", border_style=PRIMARY_ACCENT, style=f"on {BACKGROUND}"))
-
-        # Progress Bars
-        progress = Progress(TextColumn("{task.description}", style=TEXT_COLOR),
-                            BarColumn(bar_width=40, complete_style=PRIMARY_ACCENT, style=PROGRESS_BAR_BG),
-                            TextColumn("{task.percentage:>3.0f}%", style=TEXT_COLOR))
-        progress.add_task(f"Hashrate: {hashrate:.2f}", total=DEFAULTS["HASHRATE_SETPOINT"], completed=hashrate)
-        progress.add_task(f"Voltage: {voltage:.2f}", total=DEFAULTS["MAX_VOLTAGE"], completed=voltage)
-        progress.add_task(f"Frequency: {frequency:.2f}", total=DEFAULTS["MAX_FREQUENCY"], completed=frequency)
-        self.layout["progress"].update(Panel(progress, title="Performance", border_style=PRIMARY_ACCENT, style=f"on {BACKGROUND}"))
-
-        # Log Panel
-        status = f"Temp: {temp}°C | Hashrate: {hashrate:.2f} GH/s | Power: {power}W"
-        self.log_messages.append(status)
-        if len(self.log_messages) > 8:
-            self.log_messages.pop(0)
-        log_text = Text("\n".join(self.log_messages), style=f"{TEXT_COLOR} on {BACKGROUND}")
-        self.layout["log"].update(Panel(log_text, title="Log", border_style=PRIMARY_ACCENT, style=f"on {BACKGROUND}"))
-
-
-class NullPresenter:
-    """No-op presenter for console-only logging."""
-
-    def update(self, info: Dict[str, Any], hashrate: float, stratum_info: List[Dict[str, Any]]) -> None:
-        """
-        Do nothing (placeholder for console-only mode).
-
-        Args:
-            info (Dict[str, Any]): System metrics (unused).
-            hashrate (float): Current hashrate in GH/s (unused).
-            stratum_info (List[Dict[str, Any]]): Stratum endpoints (unused).
-        """
-        pass
-
-# --- Application Layer ---
-
-class TuneBitaxeUseCase:
-    def __init__(self, tuning_strategy: TuningStrategy, hardware_gateway: HardwareGateway, logger: Logger,
-                 snapshot_manager: SnapshotManager, presenter: Presenter, sample_interval: float,
-                 initial_voltage: float, initial_frequency: float, pools_file: str, config: Dict[str, Any]) -> None:
+class TuningManager:
+    def __init__(
+        self,
+        tuning_strategy: TuningStrategy,
+        api_client: IBitaxeAPIClient,
+        logger: ILogger,
+        config_loader: IConfigLoader,
+        terminal_ui: ITerminalUI,
+        sample_interval: float,
+        initial_voltage: float,
+        initial_frequency: float,
+        pools_file: str,
+        config: Dict[str, Any],
+        user_file: Optional[str] = None,
+        primary_stratum: Optional[Dict[str, Any]] = None,
+        backup_stratum: Optional[Dict[str, Any]] = None
+    ):
         self.tuning_strategy = tuning_strategy
-        self.hardware_gateway = hardware_gateway
+        self.api_client = api_client
         self.logger = logger
-        self.snapshot_manager = snapshot_manager
-        self.presenter = presenter
+        self.config_loader = config_loader
+        self.terminal_ui = terminal_ui
         self.sample_interval = sample_interval
         self.running = True
         self.current_voltage = initial_voltage
         self.current_frequency = initial_frequency
         self.pools_file = pools_file
         self.config = config
+        self.user_file = user_file
 
-        # Fetch and set stratum endpoints
-        stratum_info = get_top_pools(self.config, self.pools_file)
+        # Get current system settings
+        system_info = self.api_client.get_system_info()
+        if system_info is None:
+            logging.error("Failed to get system info")
+            sys.exit(1)
+            
+        current_stratum_user = system_info.get("stratumUser", "")
+        current_fallback_user = system_info.get("fallbackStratumUser", "")
+
+        # Only load from user.yaml if needed
+        self.stratum_users = {}
+        if not current_stratum_user or not current_fallback_user:
+            self.stratum_users = self._load_stratum_users()
+            logging.debug(f"Loaded stratum users from user.yaml: {self.stratum_users}")
+
+        # Determine stratum endpoints
+        if primary_stratum and backup_stratum:
+            stratum_info = [primary_stratum, backup_stratum]
+        else:
+            stratum_info = self._get_top_pools()
+
         if len(stratum_info) < 2:
-            logger.warning("Less than two stratum endpoints available, duplicating or using defaults")
-            if stratum_info:
-                stratum_info.append(stratum_info[0])
-            else:
-                stratum_info = [
-                    {"endpoint": "solo.ckpool.org", "port": 3333, "user": ""},
-                    {"endpoint": "datafree.mine.ocean.xyz", "port": 3404, "user": ""}
-                ]
+            logging.error("At least two stratum endpoints are required. Provide via command-line or ensure pools_file has sufficient entries.")
+            sys.exit(1)
 
-        if not self.hardware_gateway.set_stratum(stratum_info[0], stratum_info[1]):
-            logger.error("Failed to set stratum endpoints, proceeding with existing settings")
-        self.hardware_gateway.set_settings(self.current_voltage, self.current_frequency)
+        primary = stratum_info[0]
+        backup = stratum_info[1]
 
-    def start(self) -> None:
-        while self.running:
-            info = self.hardware_gateway.get_system_info()
-            if info is None:
-                logger.warning("Failed to fetch system info, skipping update")
-                time.sleep(self.sample_interval)
-                continue
-            # Log the full info dict to verify stratum values
-            logger.debug(f"System info from API: {json.dumps(info, indent=2)}")
-            temp = float(info.get("temp", "N/A")) if info.get("temp", "N/A") != "N/A" else DEFAULTS["TARGET_TEMP"] + 1
-            hashrate = info.get("hashRate", 0)
-            power = info.get("power", 0)
-            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-            self.logger.log(timestamp, self.current_frequency, self.current_voltage, hashrate, temp)
-            self.presenter.update(info, hashrate, [])
-            new_voltage, new_frequency = self.tuning_strategy.adjust(self.current_voltage, self.current_frequency, temp, hashrate, power)
-            self.current_voltage = new_voltage
-            self.current_frequency = self.hardware_gateway.set_settings(new_voltage, new_frequency)
-            self.snapshot_manager.save(self.current_voltage, self.current_frequency)
-            time.sleep(self.sample_interval)
+        # Only set users if system values are empty
+        if not current_stratum_user:
+            primary["user"] = (
+                primary.get("user") or  # Command line argument
+                self.stratum_users.get("stratumUser", "") # user.yaml fallback
+            )
+        else:
+            primary["user"] = current_stratum_user
+            logging.info(f"Preserving existing primary stratum user: {current_stratum_user}")
 
-    def start(self) -> None:
-        while self.running:
-            info = self.hardware_gateway.get_system_info()
-            if info is None:
-                time.sleep(self.sample_interval)
-                continue
-            temp = float(info.get("temp", "N/A")) if info.get("temp", "N/A") != "N/A" else DEFAULTS["TARGET_TEMP"] + 1
-            hashrate = info.get("hashRate", 0)
-            power = info.get("power", 0)
-            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-            self.logger.log(timestamp, self.current_frequency, self.current_voltage, hashrate, temp)
-            self.presenter.update(info, hashrate, [])  # No stratum_info needed for TUI
-            new_voltage, new_frequency = self.tuning_strategy.adjust(self.current_voltage, self.current_frequency, temp, hashrate, power)
-            self.current_voltage = new_voltage
-            self.current_frequency = self.hardware_gateway.set_settings(new_voltage, new_frequency)
-            self.snapshot_manager.save(self.current_voltage, self.current_frequency)
-            time.sleep(self.sample_interval)
+        if not current_fallback_user:
+            backup["user"] = (
+                backup.get("user") or # Command line argument
+                self.stratum_users.get("fallbackStratumUser", "") or
+                self.stratum_users.get("stratumUser", "")
+            )
+        else:
+            backup["user"] = current_fallback_user
+            logging.info(f"Preserving existing backup stratum user: {current_fallback_user}")
 
-    def stop(self) -> None:
-        """Stop the tuning loop and save current settings."""
+        # Validate stratum users
+        if not primary["user"] or not backup["user"]:
+            logging.error(f"Stratum users not properly configured. Primary: '{primary['user']}', Backup: '{backup['user']}'")
+            logging.error("Please check your configuration or provide users via command line arguments")
+            sys.exit(1)
+
+        logging.info(f"Setting primary stratum: {primary['endpoint']}:{primary['port']} with user {primary['user']}")
+        logging.info(f"Setting backup stratum: {backup['endpoint']}:{backup['port']} with user {backup['user']}")
+
+        # Configure API client with stratum settings
+        if self.api_client.set_stratum(primary, backup):
+            logging.info("Stratum configuration successful, restarting miner...")
+            if isinstance(self.terminal_ui, RichTerminalUI):
+                self.terminal_ui.show_banner()
+            time.sleep(1)
+            self.api_client.restart()
+        else:
+            logging.error("Failed to set stratum endpoints, not restarting")
+            sys.exit(1)
+
+        # Initialize hardware settings
+        logging.info(f"Initializing hardware settings: Voltage={self.current_voltage}mV, Frequency={self.current_frequency}MHz")
+        self.api_client.set_settings(self.current_voltage, self.current_frequency)
+
+
+    def stop_tuning(self):
+        """Stop the tuning process gracefully"""
         self.running = False
-        self.snapshot_manager.save(self.current_voltage, self.current_frequency)
+        if isinstance(self.terminal_ui, RichTerminalUI):
+            self.terminal_ui.stop()
+        print("\nTuning stopped gracefully")
 
-# --- Main Setup ---
+    def start_tuning(self):
+        """Start the tuning process."""
+        try:
+            if isinstance(self.terminal_ui, RichTerminalUI):
+                self.terminal_ui.start()
+            
+            while self.running:
+                try:
+                    system_info = self.api_client.get_system_info()
+                    if not system_info:
+                        time.sleep(1)
+                        continue
+
+                    # Update TUI
+                    self.terminal_ui.update(system_info, self.current_voltage, self.current_frequency)
+
+                    # Log current state
+                    self.logger.log_to_csv(
+                        timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
+                        frequency=self.current_frequency,
+                        voltage=self.current_voltage,
+                        hashrate=system_info.get("hashRate", 0),
+                        temp=system_info.get("temp", 0),
+                        pid_settings=self.config
+                    )
+
+                    # Apply tuning strategy
+                    new_voltage, new_frequency = self.tuning_strategy.apply_strategy(
+                        current_voltage=self.current_voltage,
+                        current_frequency=self.current_frequency,
+                        temp=system_info.get("temp", 0),
+                        hashrate=system_info.get("hashRate", 0),
+                        power=system_info.get("power", 0)
+                    )
+
+                    # Apply new settings if they changed
+                    if new_voltage != self.current_voltage or new_frequency != self.current_frequency:
+                        self.current_voltage = new_voltage
+                        self.current_frequency = new_frequency
+                        self.api_client.set_settings(new_voltage, new_frequency)
+                        self.logger.save_snapshot(new_voltage, new_frequency)
+
+                    time.sleep(self.sample_interval)
+
+                except KeyboardInterrupt:
+                    break
+                except Exception as e:
+                    print(f"Error in tuning loop: {e}")
+                    time.sleep(1)
+
+        finally:
+            if isinstance(self.terminal_ui, RichTerminalUI):
+                self.terminal_ui.stop()
+
+    def _load_stratum_users(self) -> Dict[str, str]:
+        """Load stratum users from the user_file."""
+        if not self.user_file:
+            self.user_file = "user.yaml"
+            logging.debug(f"No user file specified, using default: {self.user_file}")
+
+        try:
+            if os.path.exists(self.user_file):
+                with open(self.user_file, 'r') as f:
+                    users = yaml.safe_load(f)
+                    if not users:
+                        logging.error(f"Empty or invalid user file: {self.user_file}")
+                        return {}
+                    required_keys = ['stratumUser', 'fallbackStratumUser']
+                    if not all(key in users for key in required_keys):
+                        logging.error(f"Missing required keys in {self.user_file}. Required: {required_keys}")
+                        return {}
+                    logging.debug(f"Loaded stratum users from {self.user_file}: {users}")
+                    return users
+            else:
+                logging.error(f"User file not found: {self.user_file}")
+                return {}
+        except Exception as e:
+            logging.error(f"Error loading user file {self.user_file}: {e}")
+            return {}
+
+    def _get_top_pools(self) -> List[Dict[str, Any]]:
+        """Load top pools from pools_file and ensure they have 'port' key."""
+        if os.path.exists(self.pools_file):
+            with open(self.pools_file, 'r') as f:
+                pools = yaml.safe_load(f) or []
+            for pool in pools:
+                endpoint = pool.get('endpoint', '')
+                try:
+                    hostname, port = parse_endpoint(endpoint)
+                    pool['port'] = port
+                    pool['endpoint'] = hostname
+                except ValueError:
+                    pool['port'] = 0
+                    logging.warning(f"Invalid endpoint {endpoint}, port set to 0.")
+            return pools[:2]
+        else:
+            return []
+
+def parse_stratum(url: str) -> Dict[str, Any]:
+    """Parse a stratum URL into a dictionary."""
+    parsed = urlparse(url)
+    if parsed.scheme != 'stratum+tcp':
+        raise ValueError(f"Invalid stratum scheme: {parsed.scheme}. Use 'stratum+tcp://host:port'")
+    return {"endpoint": parsed.hostname, "port": parsed.port}
 
 def parse_arguments() -> argparse.Namespace:
-    """
-    Parse command-line arguments for the BitaxePID Auto-Tuner.
-
-    Returns:
-        argparse.Namespace: Parsed command-line arguments.
-    """
+    """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="BitaxePID Auto-Tuner")
     parser.add_argument("--ip", required=True, type=str, help="IP address of the Bitaxe miner")
-    parser.add_argument("--config", type=str, help="Path to YAML configuration file")
-    parser.add_argument("-v", "--voltage", type=int, help="Initial voltage in mV")
-    parser.add_argument("-f", "--frequency", type=int, help="Initial frequency in MHz")
-    parser.add_argument("-t", "--target_temp", type=float, help="Target temperature in °C")
-    parser.add_argument("-i", "--interval", type=int, help="Sample interval in seconds")
-    parser.add_argument("-p", "--power_limit", type=float, help="Power limit in W")
-    parser.add_argument("-s", "--setpoint", type=float, help="Target hashrate in GH/s")
-    parser.add_argument("--temp-watch", action="store_true", help="Enable temperature-watch mode")
-    parser.add_argument("--log-to-console", action="store_true", help="Log to console only (disables TUI)")
-    parser.add_argument("--logging-level", choices=["info", "debug"], default="info", help="Logging detail")
-    parser.add_argument("--pools-file", type=str, default="pools.yaml", help="Path to pools YAML file")
+    parser.add_argument("--config", type=str, help="Path to optional user YAML configuration file")
+    parser.add_argument("--user-file", type=str, default="user.yaml", help="Path to user YAML file for stratum users (default: user.yaml)")
+    parser.add_argument("--pools-file", type=str, default="pools.yaml", help="Path to pools YAML file (default: pools.yaml)")
+    parser.add_argument("--primary-stratum", type=str, help="Primary stratum URL (e.g., stratum+tcp://host:port)")
+    parser.add_argument("--backup-stratum", type=str, help="Backup stratum URL (e.g., stratum+tcp://host:port)")
+    parser.add_argument("--stratum-user", type=str, help="Stratum user for primary pool")
+    parser.add_argument("--fallback-stratum-user", type=str, help="Stratum user for backup pool")
+    parser.add_argument("--voltage", type=float, help="Initial voltage override")
+    parser.add_argument("--frequency", type=float, help="Initial frequency override")
+    parser.add_argument("--sample-interval", type=float, help="Sample interval override (seconds)")
+    parser.add_argument("--log-to-console", action="store_true", help="Log to console instead of UI")
+    parser.add_argument("--logging-level", type=str, choices=["info", "debug"], default="info", help="Logging level")
     return parser.parse_args()
 
-def load_yaml_config(path: str) -> Dict[str, Any]:
-    """
-    Load configuration from a YAML file.
+def load_config(config_loader: IConfigLoader, asic_yaml: str, user_config_path: Optional[str] = None) -> Dict[str, Any]:
+    """Load and merge configurations from ASIC model YAML and optional user config."""
+    if not os.path.exists(asic_yaml):
+        logging.error(f"ASIC model YAML file {asic_yaml} not found.")
+        sys.exit(1)
+    config = config_loader.load_config(asic_yaml)
+    if user_config_path and os.path.exists(user_config_path):
+        user_config = config_loader.load_config(user_config_path)
+        config.update(user_config)
+    return config
 
-    Args:
-        path (str): Path to the YAML configuration file.
-
-    Returns:
-        Dict[str, Any]: Configuration dictionary.
-
-    Raises:
-        SystemExit: If the file cannot be loaded or is invalid.
-    """
-    try:
-        with open(path, "r") as f:
-            config = yaml.safe_load(f)
-            if config is None:
-                raise ValueError("YAML file is empty")
-            return config
-    except Exception as e:
-        logger.error(f"Failed to load configuration file {path}: {e}")
+def validate_config(config: Dict[str, Any]) -> None:
+    """Validate that required configuration keys are present."""
+    required_keys = [
+        "INITIAL_VOLTAGE",      # Initial voltage for TuningManager
+        "INITIAL_FREQUENCY",    # Initial frequency for TuningManager
+        "SAMPLE_INTERVAL",      # Sampling interval for both
+        "LOG_FILE",             # Log file path
+        "SNAPSHOT_FILE",        # Snapshot file path
+        "POOLS_FILE",           # Pools file path
+        "PID_FREQ_KP",          # Frequency PID proportional gain
+        "PID_FREQ_KI",          # Frequency PID integral gain
+        "PID_FREQ_KD",          # Frequency PID derivative gain
+        "PID_VOLT_KP",          # Voltage PID proportional gain
+        "PID_VOLT_KI",          # Voltage PID integral gain
+        "PID_VOLT_KD",          # Voltage PID derivative gain
+        "MIN_VOLTAGE",          # Minimum allowed voltage
+        "MAX_VOLTAGE",          # Maximum allowed voltage
+        "MIN_FREQUENCY",        # Minimum allowed frequency
+        "MAX_FREQUENCY",        # Maximum allowed frequency
+        "VOLTAGE_STEP",         # Voltage adjustment step size
+        "FREQUENCY_STEP",       # Frequency adjustment step size
+        "HASHRATE_SETPOINT",    # Target hashrate for PID
+        "TARGET_TEMP",          # Maximum allowable temperature
+        "POWER_LIMIT"           # Maximum allowable power
+    ]
+    missing_keys = [key for key in required_keys if key not in config]
+    if missing_keys:
+        logging.error(f"Missing required configuration keys: {', '.join(missing_keys)}")
         sys.exit(1)
 
 def main() -> None:
-    """
-    Main entry point for the BitaxePID Auto-Tuner.
-
-    Sets up logging, loads configuration, initializes components, and starts the tuning loop.
-    """
     args = parse_arguments()
-
-    handlers = [logging.FileHandler("bitaxepid_monitor.log")]
+    # Set up logging
+    handlers = [logging.FileHandler("bitaxepid_monitor.log")]  # Optional: Make configurable
     if args.log_to_console:
         handlers.append(logging.StreamHandler())
-    logging.basicConfig(level=logging.DEBUG if args.logging_level == "debug" else logging.INFO,
-                        format="%(asctime)s - %(levelname)s - %(message)s",
-                        handlers=handlers)
+    logging_level = logging.DEBUG if args.logging_level == "debug" else logging.INFO
+    logging.basicConfig(level=logging_level, format="%(asctime)s - %(levelname)s - %(message)s", handlers=handlers)
 
-    config = DEFAULTS.copy()
-    if args.config:
-        config.update(load_yaml_config(args.config))
-    # print("Loaded config:", config)
-        
+    # Initialize API client
+    api_client = BitaxeAPIClient(args.ip)
 
-    initial_voltage = args.voltage if args.voltage is not None else config["INITIAL_VOLTAGE"]
-    initial_frequency = args.frequency if args.frequency is not None else config["INITIAL_FREQUENCY"]
-    target_temp = args.target_temp if args.target_temp is not None else config["TARGET_TEMP"]
-    sample_interval = args.interval if args.interval is not None else config["SAMPLE_INTERVAL"]
-    power_limit = args.power_limit if args.power_limit is not None else config["POWER_LIMIT"]
-    setpoint = args.setpoint if args.setpoint is not None else config["HASHRATE_SETPOINT"]
+    # Get ASIC model from system info
+    system_info = api_client.get_system_info()
+    if system_info is None:
+        logging.error("Failed to fetch system info from API.")
+        sys.exit(1)
+    asic_model = system_info.get("ASICModel", "default")
+    asic_yaml = f"{asic_model}.yaml"
 
-    snapshot_manager = JsonSnapshotManager(
-        config.get("SNAPSHOT_FILE", SNAPSHOT_FILE),
-        config.get("INITIAL_VOLTAGE", DEFAULTS["INITIAL_VOLTAGE"]),
-        config.get("INITIAL_FREQUENCY", DEFAULTS["INITIAL_FREQUENCY"])
+    # Load configuration
+    config_loader = YamlConfigLoader()
+    config = load_config(config_loader, asic_yaml, args.config)
+
+    # Apply command-line overrides
+    if args.voltage is not None:
+        config["INITIAL_VOLTAGE"] = args.voltage
+    if args.frequency is not None:
+        config["INITIAL_FREQUENCY"] = args.frequency
+    if args.sample_interval is not None:
+        config["SAMPLE_INTERVAL"] = args.sample_interval
+
+    # Validate required configuration keys
+    validate_config(config)
+
+    # Initialize components
+    logger_instance = Logger(config["LOG_FILE"], config["SNAPSHOT_FILE"])
+    tuning_strategy = PIDTuningStrategy(
+        kp_freq=config["PID_FREQ_KP"],
+        ki_freq=config["PID_FREQ_KI"],
+        kd_freq=config["PID_FREQ_KD"],
+        kp_volt=config["PID_VOLT_KP"],
+        ki_volt=config["PID_VOLT_KI"],
+        kd_volt=config["PID_VOLT_KD"],
+        min_voltage=config["MIN_VOLTAGE"],
+        max_voltage=config["MAX_VOLTAGE"],
+        min_frequency=config["MIN_FREQUENCY"],
+        max_frequency=config["MAX_FREQUENCY"],
+        voltage_step=config["VOLTAGE_STEP"],
+        frequency_step=config["FREQUENCY_STEP"],
+        setpoint=config["HASHRATE_SETPOINT"],
+        sample_interval=config["SAMPLE_INTERVAL"],
+        target_temp=config["TARGET_TEMP"],
+        power_limit=config["POWER_LIMIT"]
+    )
+    terminal_ui = NullTerminalUI() if args.log_to_console else RichTerminalUI()
+
+    # Handle stratum settings from command-line
+    primary_stratum = None
+    backup_stratum = None
+    if args.primary_stratum and args.backup_stratum:
+        try:
+            primary_stratum = parse_stratum(args.primary_stratum)
+            backup_stratum = parse_stratum(args.backup_stratum)
+            if args.stratum_user:
+                primary_stratum["user"] = args.stratum_user
+            if args.fallback_stratum_user:
+                backup_stratum["user"] = args.fallback_stratum_user
+        except ValueError as e:
+            logging.error(f"Stratum URL parsing error: {e}")
+            sys.exit(1)
+
+    # Initialize TuningManager
+    tuning_manager = TuningManager(
+        tuning_strategy=tuning_strategy,
+        api_client=api_client,
+        logger=logger_instance,
+        config_loader=config_loader,
+        terminal_ui=terminal_ui,
+        sample_interval=config["SAMPLE_INTERVAL"],
+        initial_voltage=config["INITIAL_VOLTAGE"],
+        initial_frequency=config["INITIAL_FREQUENCY"],
+        pools_file=args.pools_file if args.pools_file else config["POOLS_FILE"],
+        config=config,
+        user_file=args.user_file,
+        primary_stratum=primary_stratum,
+        backup_stratum=backup_stratum
     )
 
-    voltage_from_snapshot, frequency_from_snapshot = snapshot_manager.load()
-    initial_voltage = initial_voltage if args.voltage else voltage_from_snapshot
-    initial_frequency = initial_frequency if args.frequency else frequency_from_snapshot
+    # Signal handling
+    def signal_handler(sig, frame):
+        logging.info("Shutting down gracefully...")
+        tuning_manager.stop_tuning()
+        sys.exit(0)
 
-    hardware_gateway = BitaxeAPI(
-        args.ip,
-        config["MIN_VOLTAGE"],
-        config["MAX_VOLTAGE"],
-        config["MIN_FREQUENCY"],
-        config["MAX_FREQUENCY"],
-        config["FREQUENCY_STEP"]
-    )
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
 
-    logger_instance = CSVLogger(config.get("LOG_FILE", LOG_FILE))
-
-    if args.temp_watch:
-        tuning_strategy = TempWatchTuningStrategy(
-            config["MIN_VOLTAGE"],
-            config["MIN_FREQUENCY"],
-            config["VOLTAGE_STEP"],
-            config["FREQUENCY_STEP"],
-            target_temp
-        )
-    else:
-        tuning_strategy = PIDTuningStrategy(
-            config["PID_FREQ_KP"], config["PID_FREQ_KI"], config["PID_FREQ_KD"],
-            config["PID_VOLT_KP"], config["PID_VOLT_KI"], config["PID_VOLT_KD"],
-            config["MIN_VOLTAGE"], config["MAX_VOLTAGE"],
-            config["MIN_FREQUENCY"], config["MAX_FREQUENCY"],
-            config["VOLTAGE_STEP"], config["FREQUENCY_STEP"],
-            setpoint, sample_interval,
-            target_temp, power_limit
-        )
-
-    presenter = NullPresenter() if args.log_to_console else TUIPresenter()
-    use_case = TuneBitaxeUseCase(
-        tuning_strategy, hardware_gateway, logger_instance, snapshot_manager, presenter,
-        sample_interval, initial_voltage, initial_frequency, args.pools_file, config
-    )
-
-    def handle_sigint(signum: int, frame: Any) -> None:
-        logger.info("Received SIGINT, exiting")
-        use_case.stop()
-
-    signal.signal(signal.SIGINT, handle_sigint)
-
-    try:
-        logger.info(f"Starting BitaxePID Monitor with pools from {args.pools_file}")
-        use_case.start()
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}")
-        console.print(f"[{WARNING_COLOR}]Unexpected error: {e}[/]")
-    finally:
-        use_case.stop()
-        logger.info("Exiting monitor")
+    # Start tuning
+    logging.info("Starting BitaxePID tuner...")
+    tuning_manager.start_tuning()
 
 if __name__ == "__main__":
     main()
-
