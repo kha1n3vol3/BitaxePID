@@ -46,54 +46,58 @@ The Bitaxe Supra Gamma (assumed similar to Bitaxe Ultra 204):
 
 ## Usage
 
-Run the script with the Bitaxe IP and optional arguments:
+Run the script with the Bitaxe IP address and optional arguments:
 ```bash
-python bitaxepid.py 192.168.68.111 --config custom_config.yaml --temp-watch -t 40 -f 500
-```
-Or:
-```bash
-bash start.sh 192.168.68.111
-```
+python bitaxepid.py --ip 192.168.68.111 --config custom_config.yaml --voltage 1200 --frequency 500
 
-- **Arguments**:
-  - `bitaxepid_ip`: Bitaxe IP address (required).
-  - `--config`: Path to YAML configuration file (default: built-in defaults).
-  - `-v/--voltage`: Initial voltage in mV (overrides config).
-  - `-f/--frequency`: Initial frequency in MHz (overrides config).
-  - `-t/--target_temp`: Target temperature in °C (overrides config).
-  - `-i/--interval`: Monitoring interval in seconds (overrides config).
-  - `-p/--power_limit`: Power limit in watts (overrides config).
-  - `-s/--setpoint`: Target hashrate in GH/s (overrides config).
-  - `--temp-watch`: Focus solely on temperature control, disabling PID and hashrate optimization.
-  - `--log-to-console`: Disable TUI, output logs to console.
+Arguments:
+--ip IP: IP address of the Bitaxe miner (required).
+--config CONFIG: Path to optional user YAML configuration file (no default).
+--user-file USER_FILE: Path to user YAML file for stratum users (default: user.yaml).
+--pools-file POOLS_FILE: Path to pools YAML file (default: pools.yaml).
+--primary-stratum PRIMARY_STRATUM: Primary stratum URL (e.g., stratum+tcp://host:port) (no default).
+--backup-stratum BACKUP_STRATUM: Backup stratum URL (e.g., stratum+tcp://host:port) (no default).
+--stratum-user STRATUM_USER: Stratum user for primary pool (no default).
+--fallback-stratum-user FALLBACK_STRATUM_USER: Stratum user for backup pool (no default).
+--voltage VOLTAGE: Initial voltage override in mV (no default, overrides config if provided).
+--frequency FREQUENCY: Initial frequency override in MHz (no default, overrides config if provided).
+--sample-interval SAMPLE_INTERVAL: Monitoring interval override in seconds (no default, overrides config if provided).
+--log-to-console: Log to console instead of UI (default: False).
+--logging-level {info,debug}: Set logging level (default: info).
+--version: Show the program’s version and exit.
+Configuration Notes
+The script loads default settings from an ASIC model-specific YAML file (e.g., BM1366.yaml).
+If --config is provided, it overrides the ASIC model defaults.
+Options like --voltage, --frequency, and --sample-interval override corresponding values from the configuration files when specified.
 
-## Configuration
-
-Use the `--config` switch to specify a YAML file with model-specific settings. Command-line arguments like `--voltage` can override these values. If no `--config` is provided, the script uses built-in defaults.
-
-### Example Configuration File (`custom_config.yaml`)
+### Example Configuration File (`BM1366.yaml`)
 ```yaml
-INITIAL_VOLTAGE: 1200
-INITIAL_FREQUENCY: 500
-MIN_VOLTAGE: 1100
-MAX_VOLTAGE: 1300
-MIN_FREQUENCY: 400
-MAX_FREQUENCY: 550
+# BM1366.yaml
+INITIAL_FREQUENCY: 485       # "485 (default)" from BM1366DropdownFrequency
+MIN_FREQUENCY: 400           # lowest available frequency in BM1366DropdownFrequency
+MAX_FREQUENCY: 575           # highest available frequency in BM1366DropdownFrequency
+INITIAL_VOLTAGE: 1200        # "1200 (default)" from BM1366CoreVoltage
+MIN_VOLTAGE: 1100            # lowest available voltage in BM1366CoreVoltage
+MAX_VOLTAGE: 1300            # highest available voltage in BM1366CoreVoltage
 FREQUENCY_STEP: 25
 VOLTAGE_STEP: 10
-TARGET_TEMP: 45.0
+TARGET_TEMP: 55.0
 SAMPLE_INTERVAL: 5
 POWER_LIMIT: 15.0
 HASHRATE_SETPOINT: 500
-PID_FREQ_KP: 0.1
-PID_FREQ_KI: 0.05
+PID_FREQ_KP: 0.2
+PID_FREQ_KI: 0.01
 PID_FREQ_KD: 0.02
 PID_VOLT_KP: 0.1
-PID_VOLT_KI: 0.05
+PID_VOLT_KI: 0.01
 PID_VOLT_KD: 0.02
-LOG_FILE: "bitaxepid_tuning_log.csv"
-SNAPSHOT_FILE: "bitaxepid_snapshot.json"
+LOG_FILE: "bitaxepid_tuning_log_BM1366.csv"
+SNAPSHOT_FILE: "bitaxepid_snapshot_BM1366.json"
+POOLS_FILE: "pools.yaml"     # Added this required setting
+# Primary_Stratum: "stratum+tcp://solo.ckpool.org:3333"
+# Backup_Stratum: "stratum+tcp://datafree.mine.ocean.xyz:3404"
 ```
+
 
 ## What is `simple-pid`?
 
