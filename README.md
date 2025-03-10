@@ -133,6 +133,7 @@ This modular design improves maintainability, testability, and scalability, maki
 ## Diagram
 
 ![](appflow.png)
+![](entities.png)
 
 ## Credits
 
