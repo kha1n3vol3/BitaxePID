@@ -1,11 +1,11 @@
 # requirements.txt for BitaxePID Auto-Tuner
 
 # Required external packages
-requests
-simple-pid
 rich
 pyfiglet
+requests
 pyyaml
+simple-pid
 
 # Standard library packages (already included in Python, no pip install needed)
 # logging
