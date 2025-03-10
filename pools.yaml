@@ -1,36 +1,54 @@
+- endpoint: stratum+tcp://pool.satoshiradio.nl:3333
+  fee: ?%
+  www: https://pool.satoshiradio.nl/
+- endpoint: stratum+tcp://pool.noderunners.network:1337
+  fee: 1%
+  www: https://noderunners.network/en/pool
+- endpoint: stratum+tcp://stratum.solomining.io:7777
+  fee: 1%
+  www: https://btc.solomining.io/
+- endpoint: stratum+tcp://europe.solomining.io:7777
+  fee: 1%
+  www: https://btc.solomining.io/
+- endpoint: stratum+tcp://canada.solomining.io:7777
+  fee: 1%
+  www: https://btc.solomining.io/
+- endpoint: stratum+tcp://usa-east.solomining.io:7777
+  fee: 1%
+  www: https://btc.solomining.io/
+- endpoint: stratum+tcp://usa-west.solomining.io:7777
+  fee: 1%
+  www: https://btc.solomining.io/
+- endpoint: stratum+tcp://australia.solomining.io:7777
+  fee: 1%
+  www: https://btc.solomining.io/
+- endpoint: stratum+tcp://singapore.solomining.io:7777
+  fee: 1%
+  www: https://btc.solomining.io/
+- endpoint: stratum+tcp://pool.gobrrr.me:3333
+  fee: 0%
+  www: https://pool.gobrrr.me/#/
 - endpoint: stratum+tcp://solo.ckpool.org:3333
   fee: 2%
   www: https://solo.ckpool.org/
-  latency: 96.2456464767456
-  port: 3333
-  last_tested: '2025-03-09 15:39:46'
+- endpoint: stratum+tcp://us.vkbit.com:3333
+  fee: 1%
+  www: https://solous.vkbit.com/
+- endpoint: stratum+tcp://eu.vkbit.com:3555
+  fee: 1%
+  www: https://soloeu.vkbit.com/
 - endpoint: stratum+tcp://eusolo.ckpool.org:3333
   fee: 2%
   www: https://eusolo.ckpool.org/
-  latency: 123.68857860565186
-  port: 3333
-  last_tested: '2025-03-09 15:39:52'
 - endpoint: stratum+tcp://solo.stratum.braiins.com:3333
   fee: 2.5%
   www: https://academy.braiins.com/en/braiins-pool/rewards-and-payouts/
-  latency: 124.79996681213379
-  port: 3333
-  last_tested: '2025-03-09 15:39:59'
 - endpoint: stratum+tcp://public-pool.io:21496
   fee: 0%
   www: https://web.public-pool.io/
-  latency: 86.3029956817627
-  port: 21496
-  last_tested: '2025-03-09 15:40:05'
 - endpoint: stratum+tcp://solo.solohash.co.uk:3333
   fee: 0.5%
   www: https://solohash.co.uk/pool/bitcoin-solo
-  latency: 1129.4440031051636
-  port: 3333
-  last_tested: '2025-03-09 15:40:28'
 - endpoint: stratum+tcp://eu3.solopool.org:8003
   fee: 1.5%
   www: https://btc.solopool.org/
-  latency: 125.63049793243408
-  port: 8003
-  last_tested: '2025-03-09 15:40:40'
