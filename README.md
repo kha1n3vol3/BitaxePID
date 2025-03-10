@@ -130,6 +130,10 @@ The script has been refactored to follow clean architecture principles, separati
 
 This modular design improves maintainability, testability, and scalability, making it easier to extend the script for new features or hardware models.
 
+## Diagram
+
+![](appflow.png)
+
 ## Credits
 
 Based on concepts and code from [Hurllz/bitaxe-temp-monitor](https://github.com/Hurllz/bitaxe-temp-monitor/). 
