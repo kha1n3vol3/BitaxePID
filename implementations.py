@@ -89,30 +89,34 @@ class BitaxeAPIClient(IBitaxeAPIClient):
             return frequency
 
     def set_stratum(self, primary: Dict[str, Any], backup: Dict[str, Any]) -> bool:
+        """
+        Configure primary and backup stratum pools.
+        Expects primary and backup to have 'hostname', 'port', and optionally 'user'.
+        """
         settings = {
-            "stratumURL": primary["endpoint"],
+            "stratumURL": primary["hostname"],  # Use hostname instead of endpoint
             "stratumPort": primary["port"],
-            "fallbackStratumURL": backup["endpoint"],
+            "fallbackStratumURL": backup["hostname"],  # Use hostname instead of endpoint
             "fallbackStratumPort": backup["port"],
             "stratumUser": primary.get("user", ""),
             "fallbackStratumUser": backup.get("user", "")
         }
-        
+
         try:
             self._make_request("PATCH", "/api/system", json=settings)
-            self.logger.info(f"Set stratum: Primary={primary['endpoint']}:{primary['port']} "
-                           f"User={primary.get('user', '')}, "
-                           f"Backup={backup['endpoint']}:{backup['port']} "
-                           f"User={backup.get('user', '')}")
+            self.logger.info(f"Set stratum: Primary={primary['hostname']}:{primary['port']} "
+                             f"User={primary.get('user', '')}, "
+                             f"Backup={backup['hostname']}:{backup['port']} "
+                             f"User={backup.get('user', '')}")
             console.print(f"[{PRIMARY_ACCENT}]Set stratum configuration successfully[/]")
-            
+
             # Verify stratum settings
             time.sleep(1)  # Brief delay before verification
             system_info = self.get_system_info()
             if system_info:
-                if (system_info.get("stratumURL") != primary["endpoint"] or
+                if (system_info.get("stratumURL") != primary["hostname"] or
                     system_info.get("stratumPort") != primary["port"] or
-                    system_info.get("fallbackStratumURL") != backup["endpoint"] or
+                    system_info.get("fallbackStratumURL") != backup["hostname"] or
                     system_info.get("fallbackStratumPort") != backup["port"] or
                     system_info.get("stratumUser") != primary.get("user", "") or
                     system_info.get("fallbackStratumUser") != backup.get("user", "")):

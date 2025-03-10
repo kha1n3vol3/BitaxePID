@@ -67,7 +67,7 @@ def load_user_yaml(user_yaml: str = "user.yaml") -> Dict[str, str]:
         print(f"User YAML file {user_yaml} not found. Using empty user configurations.")
         return {}
 
-def measure_latency(endpoint: str, port: int, timeout: float = 5.0, attempts: int = 10, delay: float = 0.5) -> float:
+def measure_latency(endpoint: str, port: int, timeout: float = 5.0, attempts: int = 5, delay: float = 0.5) -> float:
     """
     Measures the median latency to a given network endpoint with thorough testing.
     Args:

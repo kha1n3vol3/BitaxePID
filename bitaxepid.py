@@ -8,12 +8,42 @@ from typing import Dict, Any, Optional, List
 from urllib.parse import urlparse
 from interfaces import IBitaxeAPIClient, ILogger, IConfigLoader, ITerminalUI, TuningStrategy
 from implementations import BitaxeAPIClient, Logger, YamlConfigLoader, RichTerminalUI, NullTerminalUI, PIDTuningStrategy
-from pools import get_fastest_pools, parse_endpoint
+from pools import get_fastest_pools
 from rich.console import Console
 import yaml
-console = Console()
 
+console = Console()
 __version__ = "1.0.0"
+
+
+def parse_stratum_url(url):
+    """
+    Parse a stratum URL to extract the hostname and port.
+
+    Args:
+        url (str): The stratum URL (e.g., "stratum+tcp://solo.ckpool.org:3333")
+
+    Returns:
+        dict: A dictionary with 'hostname' and 'port' keys.
+
+    Raises:
+        ValueError: If the URL is invalid or missing required components.
+    """
+    parsed = urlparse(url)
+    
+    # Check if the scheme is correct
+    if parsed.scheme != "stratum+tcp":
+        raise ValueError(f"Invalid scheme: {parsed.scheme}. Expected 'stratum+tcp'")
+    
+    # Ensure hostname and port are present
+    if not parsed.hostname or not parsed.port:
+        raise ValueError("Stratum URL must include both hostname and port")
+    
+    return {
+        "hostname": parsed.hostname,  # Extracts "solo.ckpool.org"
+        "port": parsed.port           # Extracts 3333
+    }
+
 
 class TuningManager:
     def __init__(
@@ -45,64 +75,110 @@ class TuningManager:
         self.config = config
         self.user_file = user_file
 
-        # Get current system settings
+        # Fetch current system settings from the miner
         system_info = self.api_client.get_system_info()
         if system_info is None:
-            logging.error("Failed to get system info")
+            logging.error("Failed to get system info from miner API")
             sys.exit(1)
-            
+
+        # Preserve existing stratum users if they are set
         current_stratum_user = system_info.get("stratumUser", "")
         current_fallback_user = system_info.get("fallbackStratumUser", "")
 
-        # Only load from user.yaml if needed
+        # Load stratum users from user.yaml only if needed
         self.stratum_users = {}
         if not current_stratum_user or not current_fallback_user:
             self.stratum_users = self._load_stratum_users()
             logging.debug(f"Loaded stratum users from user.yaml: {self.stratum_users}")
 
-        # Determine stratum endpoints
-        if primary_stratum and backup_stratum:
-            stratum_info = [primary_stratum, backup_stratum]
+# Determine stratum endpoints with preference: command-line > config > latency testing
+        if primary_stratum:
+            if backup_stratum:
+                # Both provided via command line
+                stratum_info = [primary_stratum, backup_stratum]
+            else:
+                # Use provided primary stratum and find a backup via latency test
+                logging.info("Using provided primary stratum; measuring backup pool latencies...")
+                backup_pools = get_fastest_pools(
+                    yaml_file=self.pools_file,
+                    stratum_user=self.stratum_users.get("stratumUser", ""),
+                    fallback_stratum_user=self.stratum_users.get("fallbackStratumUser", ""),
+                    user_yaml=self.user_file,
+                    force_measure=True,
+                    latency_expiry_minutes=15
+                )
+                if len(backup_pools) < 1:
+                    logging.error("Failed to get a valid backup pool from get_fastest_pools")
+                    sys.exit(1)
+                backup = backup_pools[0]
+                stratum_info = [primary_stratum, backup]
+        elif 'PRIMARY_STRATUM' in self.config and 'BACKUP_STRATUM' in self.config:
+            # Parse stratum URLs from config.yaml or asicmodel.yaml
+            try:
+                primary = parse_stratum_url(self.config['PRIMARY_STRATUM'])
+                backup = parse_stratum_url(self.config['BACKUP_STRATUM'])
+                stratum_info = [primary, backup]
+            except ValueError as e:
+                logging.error(f"Invalid stratum URL in config.yaml: {e}")
+                sys.exit(1)
         else:
-            stratum_info = self._get_top_pools()
-
-        if len(stratum_info) < 2:
-            logging.error("At least two stratum endpoints are required. Provide via command-line or ensure pools_file has sufficient entries.")
-            sys.exit(1)
-
-        primary = stratum_info[0]
-        backup = stratum_info[1]
-
-        # Only set users if system values are empty
-        if not current_stratum_user:
-            primary["user"] = (
-                primary.get("user") or  # Command line argument
-                self.stratum_users.get("stratumUser", "") # user.yaml fallback
+            # Fall back to latency testing for both pools
+            logging.info("No stratum URLs provided; measuring pool latencies...")
+            stratum_info = get_fastest_pools(
+                yaml_file=self.pools_file,
+                stratum_user=self.stratum_users.get("stratumUser", ""),
+                fallback_stratum_user=self.stratum_users.get("fallbackStratumUser", ""),
+                user_yaml=self.user_file,
+                force_measure=True,
+                latency_expiry_minutes=15
             )
+            if len(stratum_info) < 2:
+                logging.error("Failed to get at least two valid pools from get_fastest_pools")
+                sys.exit(1)
+
+        # Standardize pool dictionaries to have 'hostname' and 'port'
+        for pool in stratum_info:
+            if 'endpoint' in pool and 'hostname' not in pool:
+                try:
+                    parsed = parse_stratum_url(pool['endpoint'])
+                    pool['hostname'] = parsed['hostname']
+                    pool['port'] = parsed['port']
+                except ValueError as e:
+                    logging.error(f"Invalid stratum URL in pool: {e}")
+                    sys.exit(1)
+            if 'hostname' not in pool or 'port' not in pool:
+                logging.error("Pool configuration missing 'hostname' or 'port'")
+                sys.exit(1)
+            # Optionally, remove 'endpoint' to avoid confusion
+            pool.pop('endpoint', None)
+
+        # Assign primary and backup stratum configurations
+        primary, backup = stratum_info[0], stratum_info[1]
+
+        # Set stratum users, preserving existing ones if present
+        if not current_stratum_user:
+            primary["user"] = primary.get("user") or self.stratum_users.get("stratumUser", "")
         else:
             primary["user"] = current_stratum_user
             logging.info(f"Preserving existing primary stratum user: {current_stratum_user}")
 
         if not current_fallback_user:
-            backup["user"] = (
-                backup.get("user") or # Command line argument
-                self.stratum_users.get("fallbackStratumUser", "") or
-                self.stratum_users.get("stratumUser", "")
-            )
+            backup["user"] = backup.get("user") or self.stratum_users.get("fallbackStratumUser", "") or self.stratum_users.get("stratumUser", "")
         else:
             backup["user"] = current_fallback_user
             logging.info(f"Preserving existing backup stratum user: {current_fallback_user}")
 
-        # Validate stratum users
+        # Validate that stratum users are configured
         if not primary["user"] or not backup["user"]:
             logging.error(f"Stratum users not properly configured. Primary: '{primary['user']}', Backup: '{backup['user']}'")
-            logging.error("Please check your configuration or provide users via command line arguments")
+            logging.error("Please check your configuration or provide users via command line")
             sys.exit(1)
 
-        logging.info(f"Setting primary stratum: {primary['endpoint']}:{primary['port']} with user {primary['user']}")
-        logging.info(f"Setting backup stratum: {backup['endpoint']}:{backup['port']} with user {backup['user']}")
+        # Log the stratum settings being applied
+        logging.info(f"Setting primary stratum: {primary['hostname']}:{primary['port']} with user {primary['user']}")
+        logging.info(f"Setting backup stratum: {backup['hostname']}:{backup['port']} with user {backup['user']}")
 
-        # Configure API client with stratum settings
+        # Apply stratum configuration via the API client
         if self.api_client.set_stratum(primary, backup):
             logging.info("Stratum configuration successful, restarting miner...")
             if isinstance(self.terminal_ui, RichTerminalUI):
@@ -110,13 +186,29 @@ class TuningManager:
             time.sleep(1)
             self.api_client.restart()
         else:
-            logging.error("Failed to set stratum endpoints, not restarting")
+            logging.error("Failed to set stratum endpoints, not restarting miner")
             sys.exit(1)
 
         # Initialize hardware settings
         logging.info(f"Initializing hardware settings: Voltage={self.current_voltage}mV, Frequency={self.current_frequency}MHz")
         self.api_client.set_settings(self.current_voltage, self.current_frequency)
 
+    def _load_stratum_users(self) -> Dict[str, str]:
+        """
+        Load stratum users from user.yaml if available.
+        Returns:
+            Dict[str, str]: Dictionary with 'stratumUser' and optionally 'fallbackStratumUser'
+        """
+        if self.user_file:
+            try:
+                users = self.config_loader.load_config(self.user_file)
+                return {
+                    "stratumUser": users.get("stratumUser", ""),
+                    "fallbackStratumUser": users.get("fallbackStratumUser", "")
+                }
+            except Exception as e:
+                logging.warning(f"Failed to load user.yaml: {e}")
+        return {}
 
     def stop_tuning(self):
         """Stop the tuning process gracefully"""
@@ -130,7 +222,6 @@ class TuningManager:
         try:
             if isinstance(self.terminal_ui, RichTerminalUI):
                 self.terminal_ui.start()
-            
             while self.running:
                 try:
                     system_info = self.api_client.get_system_info()
@@ -143,7 +234,7 @@ class TuningManager:
 
                     # Log current state
                     self.logger.log_to_csv(
-                        timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
+                        timestamp=time.strftime("%Y-%m-d %H:%M:%S"),
                         frequency=self.current_frequency,
                         voltage=self.current_voltage,
                         hashrate=system_info.get("hashRate", 0),
@@ -174,63 +265,9 @@ class TuningManager:
                 except Exception as e:
                     print(f"Error in tuning loop: {e}")
                     time.sleep(1)
-
         finally:
             if isinstance(self.terminal_ui, RichTerminalUI):
                 self.terminal_ui.stop()
-
-    def _load_stratum_users(self) -> Dict[str, str]:
-        """Load stratum users from the user_file."""
-        if not self.user_file:
-            self.user_file = "user.yaml"
-            logging.debug(f"No user file specified, using default: {self.user_file}")
-
-        try:
-            if os.path.exists(self.user_file):
-                with open(self.user_file, 'r') as f:
-                    users = yaml.safe_load(f)
-                    if not users:
-                        logging.error(f"Empty or invalid user file: {self.user_file}")
-                        return {}
-                    required_keys = ['stratumUser', 'fallbackStratumUser']
-                    if not all(key in users for key in required_keys):
-                        logging.error(f"Missing required keys in {self.user_file}. Required: {required_keys}")
-                        return {}
-                    logging.debug(f"Loaded stratum users from {self.user_file}: {users}")
-                    return users
-            else:
-                logging.error(f"User file not found: {self.user_file}")
-                return {}
-        except Exception as e:
-            logging.error(f"Error loading user file {self.user_file}: {e}")
-            return {}
-
-    def _get_top_pools(self) -> List[Dict[str, Any]]:
-        """Load top pools from pools_file and ensure they have 'port' key."""
-        if os.path.exists(self.pools_file):
-            with open(self.pools_file, 'r') as f:
-                pools = yaml.safe_load(f) or []
-            for pool in pools:
-                endpoint = pool.get('endpoint', '')
-                try:
-                    hostname, port = parse_endpoint(endpoint)
-                    pool['port'] = port
-                    pool['endpoint'] = hostname
-                except ValueError:
-                    pool['port'] = 0
-                    logging.warning(f"Invalid endpoint {endpoint}, port set to 0.")
-            return pools[:2]
-        else:
-            return []
-
-def parse_stratum(url: str) -> Dict[str, Any]:
-    """Parse a stratum URL into a dictionary."""
-    parsed = urlparse(url)
-    if parsed.scheme != 'stratum+tcp':
-        raise ValueError(f"Invalid stratum scheme: {parsed.scheme}. Use 'stratum+tcp://host:port'")
-    return {"endpoint": parsed.hostname, "port": parsed.port}
-
-
 
 def parse_arguments() -> argparse.Namespace:
     """Parse command-line arguments."""
@@ -249,7 +286,9 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--sample-interval", type=float, help="Sample interval override (seconds)")
     parser.add_argument("--log-to-console", action="store_true", help="Log to console instead of UI")
     parser.add_argument("--logging-level", type=str, choices=["info", "debug"], default="info", help="Logging level")
-    return parser.parse_args()
+    
+    args = parser.parse_args()  # Parse the arguments
+    return args
 
 def load_config(config_loader: IConfigLoader, asic_yaml: str, user_config_path: Optional[str] = None) -> Dict[str, Any]:
     """Load and merge configurations from ASIC model YAML and optional user config."""
@@ -265,27 +304,27 @@ def load_config(config_loader: IConfigLoader, asic_yaml: str, user_config_path: 
 def validate_config(config: Dict[str, Any]) -> None:
     """Validate that required configuration keys are present."""
     required_keys = [
-        "INITIAL_VOLTAGE",      # Initial voltage for TuningManager
-        "INITIAL_FREQUENCY",    # Initial frequency for TuningManager
-        "SAMPLE_INTERVAL",      # Sampling interval for both
-        "LOG_FILE",             # Log file path
-        "SNAPSHOT_FILE",        # Snapshot file path
-        "POOLS_FILE",           # Pools file path
-        "PID_FREQ_KP",          # Frequency PID proportional gain
-        "PID_FREQ_KI",          # Frequency PID integral gain
-        "PID_FREQ_KD",          # Frequency PID derivative gain
-        "PID_VOLT_KP",          # Voltage PID proportional gain
-        "PID_VOLT_KI",          # Voltage PID integral gain
-        "PID_VOLT_KD",          # Voltage PID derivative gain
-        "MIN_VOLTAGE",          # Minimum allowed voltage
-        "MAX_VOLTAGE",          # Maximum allowed voltage
-        "MIN_FREQUENCY",        # Minimum allowed frequency
-        "MAX_FREQUENCY",        # Maximum allowed frequency
-        "VOLTAGE_STEP",         # Voltage adjustment step size
-        "FREQUENCY_STEP",       # Frequency adjustment step size
-        "HASHRATE_SETPOINT",    # Target hashrate for PID
-        "TARGET_TEMP",          # Maximum allowable temperature
-        "POWER_LIMIT"           # Maximum allowable power
+        "INITIAL_VOLTAGE",
+        "INITIAL_FREQUENCY",
+        "SAMPLE_INTERVAL",
+        "LOG_FILE",
+        "SNAPSHOT_FILE",
+        "POOLS_FILE",
+        "PID_FREQ_KP",
+        "PID_FREQ_KI",
+        "PID_FREQ_KD",
+        "PID_VOLT_KP",
+        "PID_VOLT_KI",
+        "PID_VOLT_KD",
+        "MIN_VOLTAGE",
+        "MAX_VOLTAGE",
+        "MIN_FREQUENCY",
+        "MAX_FREQUENCY",
+        "VOLTAGE_STEP",
+        "FREQUENCY_STEP",
+        "HASHRATE_SETPOINT",
+        "TARGET_TEMP",
+        "POWER_LIMIT"
     ]
     missing_keys = [key for key in required_keys if key not in config]
     if missing_keys:
@@ -295,7 +334,7 @@ def validate_config(config: Dict[str, Any]) -> None:
 def main() -> None:
     args = parse_arguments()
     # Set up logging
-    handlers = [logging.FileHandler("bitaxepid_monitor.log")]  # Optional: Make configurable
+    handlers = [logging.FileHandler("bitaxepid_monitor.log")]
     if args.log_to_console:
         handlers.append(logging.StreamHandler())
     logging_level = logging.DEBUG if args.logging_level == "debug" else logging.INFO
@@ -351,17 +390,23 @@ def main() -> None:
 
     # Handle stratum settings from command-line
     primary_stratum = None
-    backup_stratum = None
-    if args.primary_stratum and args.backup_stratum:
+    if args.primary_stratum:
         try:
-            primary_stratum = parse_stratum(args.primary_stratum)
-            backup_stratum = parse_stratum(args.backup_stratum)
+            primary_stratum = parse_stratum_url(args.primary_stratum)
             if args.stratum_user:
                 primary_stratum["user"] = args.stratum_user
+        except ValueError as e:
+            logging.error(f"Primary stratum URL parsing error: {e}")
+            sys.exit(1)
+
+    backup_stratum = None
+    if args.backup_stratum:
+        try:
+            backup_stratum = parse_stratum_url(args.backup_stratum)
             if args.fallback_stratum_user:
                 backup_stratum["user"] = args.fallback_stratum_user
         except ValueError as e:
-            logging.error(f"Stratum URL parsing error: {e}")
+            logging.error(f"Backup stratum URL parsing error: {e}")
             sys.exit(1)
 
     # Initialize TuningManager
