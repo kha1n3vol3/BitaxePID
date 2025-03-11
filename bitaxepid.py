@@ -33,7 +33,8 @@ import json
 import os
 
 console = Console()
-__version__ = "1.0.4"  # Updated version with MAC address in CSV and metrics
+__version__ = "1.0.2"  # Updated version flatten pid output to csv
+#__version__ = "1.0.1"  # Updated version with MAC address in CSV and metrics
 
 # Global variable to store the latest metrics for the HTTP server (now a list of dicts)
 latest_metrics: List[Dict[str, Any]] = []
