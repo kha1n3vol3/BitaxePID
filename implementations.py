@@ -467,11 +467,17 @@ class RichTerminalUI(ITerminalUI):
                 console.clear()
                 self.has_data = True
 
-            hashrate = system_info.get("hashRate", 0)
-            hashrate_str = f"{int(hashrate)} GH/s"
+            # Handle hashrate display with unit conversion (hashRate in GH/s)
+            hashrate = system_info.get("hashRate", 0)  # hashRate is in GH/s
+            if hashrate > 999:  # Convert to Th/s when above 999 GH/s
+                hashrate_ths = hashrate / 1000  # Convert GH/s to Th/s
+                hashrate_str = f"{hashrate_ths:.2f} Th/s"  # Two decimal places for Th/s
+            else:
+                hashrate_str = f"{int(hashrate)} GH/s"  # For values <= 999, display in GH/s
             ascii_art = pyfiglet.figlet_format(hashrate_str, font="ansi_regular")
             self.layout["hashrate"].update(Panel(ascii_art, title="Hashrate", border_style=PRIMARY_ACCENT))
 
+            # Header section
             header_table = Table(show_header=False, box=None)
             header_table.add_column("", style=DECORATIVE_COLOR, justify="right")
             header_table.add_column("", style=TEXT_COLOR)
@@ -483,6 +489,7 @@ class RichTerminalUI(ITerminalUI):
             header_table.add_row("Backup User", system_info.get("fallbackStratumUser", "N/A"))
             self.layout["header"].update(Panel(header_table, title="System Status"))
 
+            # Other sections (Network, Chip, Power, etc.)
             section_layouts = {
                 "Network": "network", "Chip": "chip", "Power": "power", "Thermal": "thermal",
                 "Mining Performance": "mining_performance", "System": "system", "Display & Fans": "display_fans"
@@ -502,9 +509,10 @@ class RichTerminalUI(ITerminalUI):
                         table.add_row(key, str(value))
                 self.layout[layout_name].update(Panel(table, title=section_name))
 
-            status = (f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Voltage: {int(voltage)}mV, "
-                      f"Frequency: {int(frequency)}MHz, Hashrate: {int(hashrate)} GH/s, "
-                      f"Temp: {system_info.get('temp', 'N/A')}°C")
+            # Log section
+            status = (f"{time.strftime('%Y-%m-d %H:%M:%S')} - Voltage: {int(voltage)}mV, "
+                    f"Frequency: {int(frequency)}MHz, Hashrate: {hashrate_str}, "
+                    f"Temp: {system_info.get('temp', 'N/A')}°C")
             self.log_messages.append(status)
             if len(self.log_messages) > 6:
                 self.log_messages.pop(0)
