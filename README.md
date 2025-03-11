@@ -49,23 +49,43 @@ The Bitaxe Supra Gamma (assumed similar to Bitaxe Ultra 204):
 Run the script with the Bitaxe IP address and optional arguments:
 ```bash
 python bitaxepid.py --ip 192.168.68.111 --config custom_config.yaml --voltage 1200 --frequency 500
+or
+% python bitaxepid.py --help
+usage: bitaxepid.py [-h] [--version] --ip IP [--config CONFIG] [--user-file USER_FILE] [--pools-file POOLS_FILE]
+                    [--primary-stratum PRIMARY_STRATUM] [--backup-stratum BACKUP_STRATUM] [--stratum-user STRATUM_USER]
+                    [--fallback-stratum-user FALLBACK_STRATUM_USER] [--voltage VOLTAGE] [--frequency FREQUENCY]
+                    [--sample-interval SAMPLE_INTERVAL] [--log-to-console] [--logging-level {info,debug}] [--serve-metrics]
 
-Arguments:
---ip IP: IP address of the Bitaxe miner (required).
---config CONFIG: Path to optional user YAML configuration file (no default).
---user-file USER_FILE: Path to user YAML file for stratum users (default: user.yaml).
---pools-file POOLS_FILE: Path to pools YAML file (default: pools.yaml).
---primary-stratum PRIMARY_STRATUM: Primary stratum URL (e.g., stratum+tcp://host:port) (no default).
---backup-stratum BACKUP_STRATUM: Backup stratum URL (e.g., stratum+tcp://host:port) (no default).
---stratum-user STRATUM_USER: Stratum user for primary pool (no default).
---fallback-stratum-user FALLBACK_STRATUM_USER: Stratum user for backup pool (no default).
---voltage VOLTAGE: Initial voltage override in mV (no default, overrides config if provided).
---frequency FREQUENCY: Initial frequency override in MHz (no default, overrides config if provided).
---sample-interval SAMPLE_INTERVAL: Monitoring interval override in seconds (no default, overrides config if provided).
---log-to-console: Log to console instead of UI (default: False).
---logging-level {info,debug}: Set logging level (default: info).
---version: Show the program’s version and exit.
-Configuration Notes
+BitaxePID Auto-Tuner
+
+options:
+  -h, --help            show this help message and exit
+  --version             show program's version number and exit
+  --ip IP               IP address of the Bitaxe miner
+  --config CONFIG       Path to optional user YAML configuration file
+  --user-file USER_FILE
+                        Path to user YAML file (default: from config)
+  --pools-file POOLS_FILE
+                        Path to pools YAML file (default: from config)
+  --primary-stratum PRIMARY_STRATUM
+                        Primary stratum URL (e.g., stratum+tcp://host:port)
+  --backup-stratum BACKUP_STRATUM
+                        Backup stratum URL (e.g., stratum+tcp://host:port)
+  --stratum-user STRATUM_USER
+                        Stratum user for primary pool
+  --fallback-stratum-user FALLBACK_STRATUM_USER
+                        Stratum user for backup pool
+  --voltage VOLTAGE     Initial voltage override (mV)
+  --frequency FREQUENCY
+                        Initial frequency override (MHz)
+  --sample-interval SAMPLE_INTERVAL
+                        Sample interval override (seconds)
+  --log-to-console      Log to console instead of UI
+  --logging-level {info,debug}
+                        Logging level
+  --serve-metrics       Serve metrics via HTTP on port 8093 (default: False)
+
+### Configuration Notes
 The script loads default settings from an ASIC model-specific YAML file (e.g., BM1366.yaml).
 If --config is provided, it overrides the ASIC model defaults.
 Options like --voltage, --frequency, and --sample-interval override corresponding values from the configuration files when specified.
@@ -84,7 +104,7 @@ VOLTAGE_STEP: 10
 TARGET_TEMP: 55.0
 SAMPLE_INTERVAL: 5
 POWER_LIMIT: 15.0
-HASHRATE_SETPOINT: 500
+HASHRATE_SETPOINT: 525
 PID_FREQ_KP: 0.2
 PID_FREQ_KI: 0.01
 PID_FREQ_KD: 0.02
@@ -93,11 +113,16 @@ PID_VOLT_KI: 0.01
 PID_VOLT_KD: 0.02
 LOG_FILE: "bitaxepid_tuning_log_BM1366.csv"
 SNAPSHOT_FILE: "bitaxepid_snapshot_BM1366.json"
-POOLS_FILE: "pools.yaml"     # Added this required setting
-# Primary_Stratum: "stratum+tcp://solo.ckpool.org:3333"
-# Backup_Stratum: "stratum+tcp://datafree.mine.ocean.xyz:3404"
+POOLS_FILE: "pools.yaml"
+METRICS_SERVE: FALSE
+USER_FILE: "user.yaml" # only used if stratumuser is blank on Bitaxe. Force write with --stratum-user
+# PRIMARY_STRATUM: "stratum+tcp://stratum.solomining.io:7777"
+# BACKUP_STRATUM: "stratum+tcp://stratum.solomining.io:7777"
 ```
 
+## What is a PID controller?
+
+A PID controller is a widely used feedback system that continuously adjusts a process to reach a desired target by combining three key actions: the proportional term, which reacts to the current error between the setpoint and the measured value; the integral term, which accumulates past errors to eliminate steady-state discrepancies; and the derivative term, which predicts future errors based on the rate of change. This blend of immediate response, historical correction, and predictive adjustment allows the controller to improve system stability and performance across many applications—from motor speed and position control to temperature regulation—without relying on complex mathematical theory.
 
 ## What is `simple-pid`?
 
