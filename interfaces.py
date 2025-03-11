@@ -17,6 +17,8 @@ Usage:
     ...         return True
     ...     def restart(self):
     ...         return True
+    ...     def close(self):
+    ...         pass
     >>> client = MyClient()
     >>> client.get_system_info()
     {'hashRate': 500}
@@ -92,6 +94,19 @@ class IBitaxeAPIClient(ABC):
         Example:
             >>> client.restart()
             True
+        """
+        pass
+
+    @abstractmethod
+    def close(self) -> None:
+        """
+        Close any resources (e.g., connection pools) used by the API client.
+
+        This method ensures that implementations properly clean up network connections or other resources
+        when the client is no longer needed, preventing resource leaks.
+
+        Example:
+            >>> client.close()
         """
         pass
 

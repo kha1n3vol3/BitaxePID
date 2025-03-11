@@ -33,8 +33,7 @@ import json
 import os
 
 console = Console()
-__version__ = "1.0.2"  # Updated version flatten pid output to csv
-#__version__ = "1.0.1"  # Updated version with MAC address in CSV and metrics
+__version__ = "1.0.3"  # add connection pool for reuse to bitaxe.
 
 # Global variable to store the latest metrics for the HTTP server (now a list of dicts)
 latest_metrics: List[Dict[str, Any]] = []
@@ -413,7 +412,6 @@ def validate_config(config: Dict[str, Any]) -> None:
         sys.exit(1)
 
 def main() -> None:
-    """Execute the BitaxePID tuning process with optional metrics server."""
     args = parse_arguments()
     handlers = [logging.FileHandler("bitaxepid_monitor.log")]
     if args.log_to_console:
@@ -424,10 +422,18 @@ def main() -> None:
         handlers=handlers
     )
 
-    api_client = BitaxeAPIClient(args.ip)
+    # Initialize the API client with enhanced settings
+    api_client = BitaxeAPIClient(
+        ip=args.ip,
+        timeout=10,  # Longer timeout to avoid ConnectTimeoutError
+        retries=5,   # More retries for resilience
+        pool_maxsize=10  # Connection pooling
+    )
+    
     system_info = api_client.get_system_info()
     if system_info is None:
         logging.error("Failed to fetch system info from API")
+        api_client.close()
         sys.exit(1)
 
     asic_model = system_info.get("ASICModel", "default")
@@ -435,7 +441,7 @@ def main() -> None:
     config_loader = YamlConfigLoader()
     config = load_config(config_loader, asic_yaml, args.config)
 
-    # Apply overrides
+    # Apply overrides (unchanged)
     if args.voltage is not None:
         config["INITIAL_VOLTAGE"] = args.voltage
     if args.frequency is not None:
@@ -444,9 +450,8 @@ def main() -> None:
         config["SAMPLE_INTERVAL"] = args.sample_interval
     validate_config(config)
 
-    # Determine if metrics should be served (command-line takes precedence over config)
     serve_metrics = args.serve_metrics or config.get("METRICS_SERVE", False)
-    config["METRICS_SERVE"] = serve_metrics  # Update config to reflect final decision
+    config["METRICS_SERVE"] = serve_metrics
 
     logger_instance = Logger(config["LOG_FILE"], config["SNAPSHOT_FILE"])
     tuning_strategy = PIDTuningStrategy(
@@ -486,12 +491,13 @@ def main() -> None:
     def signal_handler(sig: int, frame: Any) -> None:
         logging.info("Shutting down gracefully...")
         tuning_manager.stop_tuning()
+        api_client.close()  # Clean up the connection pool
         sys.exit(0)
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     if serve_metrics:
-        start_metrics_server()  # Start the HTTP metrics server only if enabled
+        start_metrics_server()
     logging.info("Starting BitaxePID tuner...")
     tuning_manager.start_tuning()
 
