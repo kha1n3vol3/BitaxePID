@@ -241,6 +241,7 @@ class BitaxeAPIClient(IBitaxeAPIClient):
             console.print(f"[{ERROR_COLOR}]Error restarting Bitaxe miner: {e}[/]")
             return False
 
+
 class Logger(ILogger):
     """Concrete implementation for logging miner data to CSV and snapshots to JSON."""
 
@@ -260,10 +261,12 @@ class Logger(ILogger):
         """Initialize the CSV file with an alphabetized header row (MAC address first) if it doesn't exist."""
         if not os.path.exists(self.log_file):
             headers = [
-                "mac_address",  # Added as first column
-                "board_voltage", "core_voltage_actual", "current", "fanrpm", "frequency",
-                "hashrate", "pid_settings", "power", "target_frequency", "target_voltage",
-                "temp", "timestamp"
+                "mac_address", "timestamp", "target_frequency", "target_voltage", "hashrate", "temp",
+                "power", "board_voltage", "current", "core_voltage_actual", "frequency", "fanrpm",
+                "pid_freq_kp", "pid_freq_ki", "pid_freq_kd", "pid_volt_kp", "pid_volt_ki", "pid_volt_kd",
+                "initial_frequency", "min_frequency", "max_frequency", "initial_voltage", "min_voltage",
+                "max_voltage", "frequency_step", "voltage_step", "target_temp", "sample_interval",
+                "power_limit", "hashrate_setpoint"
             ]
             with open(self.log_file, 'w', newline='') as f:
                 writer = csv.writer(f)
@@ -286,7 +289,7 @@ class Logger(ILogger):
         fanrpm: int
     ) -> None:
         """
-        Log miner performance data, including PID settings and MAC address, to a CSV file.
+        Log miner performance data, including flattened PID settings and MAC address, to a CSV file.
 
         Args:
             mac_address (str): MAC address of the miner.
@@ -302,17 +305,30 @@ class Logger(ILogger):
             core_voltage_actual (float): Actual core voltage (mV).
             frequency (float): Actual frequency (MHz).
             fanrpm (int): Fan speed (RPM).
-
-        Example:
-            >>> logger = Logger("log.csv", "snapshot.json")
-            >>> logger.log_to_csv("00:1A:2B:3C:4D:5E", "2025-03-11 10:00:00", 485, 1200, 500, 48, {"PID_FREQ_KP": 0.2}, 14.6, 4812.5, 3001.25, 1312, 485, 3870)
         """
         with open(self.log_file, 'a', newline='') as f:
             writer = csv.writer(f)
             writer.writerow([
-                mac_address, board_voltage, core_voltage_actual, current, fanrpm, frequency,
-                hashrate, str(pid_settings), power, target_frequency, target_voltage,
-                temp, timestamp
+                mac_address, timestamp, target_frequency, target_voltage, hashrate, temp,
+                power, board_voltage, current, core_voltage_actual, frequency, fanrpm,
+                pid_settings.get("PID_FREQ_KP", ""),
+                pid_settings.get("PID_FREQ_KI", ""),
+                pid_settings.get("PID_FREQ_KD", ""),
+                pid_settings.get("PID_VOLT_KP", ""),
+                pid_settings.get("PID_VOLT_KI", ""),
+                pid_settings.get("PID_VOLT_KD", ""),
+                pid_settings.get("INITIAL_FREQUENCY", ""),
+                pid_settings.get("MIN_FREQUENCY", ""),
+                pid_settings.get("MAX_FREQUENCY", ""),
+                pid_settings.get("INITIAL_VOLTAGE", ""),
+                pid_settings.get("MIN_VOLTAGE", ""),
+                pid_settings.get("MAX_VOLTAGE", ""),
+                pid_settings.get("FREQUENCY_STEP", ""),
+                pid_settings.get("VOLTAGE_STEP", ""),
+                pid_settings.get("TARGET_TEMP", ""),
+                pid_settings.get("SAMPLE_INTERVAL", ""),
+                pid_settings.get("POWER_LIMIT", ""),
+                pid_settings.get("HASHRATE_SETPOINT", "")
             ])
 
     def save_snapshot(self, voltage: float, frequency: float) -> None:
@@ -322,10 +338,6 @@ class Logger(ILogger):
         Args:
             voltage (float): Current target voltage setting (mV).
             frequency (float): Current target frequency setting (MHz).
-
-        Example:
-            >>> logger = Logger("log.csv", "snapshot.json")
-            >>> logger.save_snapshot(1200, 485)
         """
         snapshot = {"voltage": voltage, "frequency": frequency}
         try:
