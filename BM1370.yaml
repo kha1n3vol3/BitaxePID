@@ -19,6 +19,8 @@ PID_VOLT_KI: 0.01
 PID_VOLT_KD: 0.02
 LOG_FILE: "bitaxepid_tuning_log_BM1370.csv"
 SNAPSHOT_FILE: "bitaxepid_snapshot_BM1370.json"
-POOLS_FILE: "pools.yaml"     # Added this required setting
-# Primary_Stratum: "stratum+tcp://solo.ckpool.org:3333" # override latency check
-# Backup_Stratum: "stratum+tcp://datafree.mine.ocean.xyz:3404"
+POOLS_FILE: "pools.yaml"
+METRICS_SERVE: FALSE
+USER_FILE: "user.yaml"
+# PRIMARY_STRATUM: "stratum+tcp://stratum.solomining.io:7777"
+# BACKUP_STRATUM: "stratum+tcp://stratum.solomining.io:7777"
