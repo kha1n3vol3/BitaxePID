@@ -46,7 +46,11 @@ The Bitaxe Supra Gamma (assumed similar to Bitaxe Ultra 204):
      ```bash
      bash setup.sh  # Requires uv
      ```
-
+## Podman
+```
+podman build --tag bitaxepid-container .
+podman run -it --publish 8093:8093 bitaxepid-container 192.168.68.111
+```
 ## Usage
 
 Run the script with the Bitaxe IP address and optional arguments:
