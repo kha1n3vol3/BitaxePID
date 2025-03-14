@@ -571,7 +571,26 @@ class PIDTuningStrategy(TuningStrategy):
         target_temp: float,
         power_limit: float
     ) -> None:
-        """[Same docstring as before]"""
+        """
+        Initialize the PID tuning strategy with control parameters.
+        Args:
+            kp_freq (float): Proportional gain for frequency PID.
+            ki_freq (float): Integral gain for frequency PID.
+            kd_freq (float): Derivative gain for frequency PID.
+            kp_volt (float): Proportional gain for voltage PID.
+            ki_volt (float): Integral gain for voltage PID.
+            kd_volt (float): Derivative gain for voltage PID.
+            min_voltage (float): Minimum allowed voltage (mV).
+            max_voltage (float): Maximum allowed voltage (mV).
+            min_frequency (float): Minimum allowed frequency (MHz).
+            max_frequency (float): Maximum allowed frequency (MHz).
+            voltage_step (float): Voltage adjustment step size (mV).
+            frequency_step (float): Frequency adjustment step size (MHz).
+            setpoint (float): Target hashrate setpoint (GH/s).
+            sample_interval (float): PID sample interval (seconds).
+            target_temp (float): Target temperature (°C).
+            power_limit (float): Power limit (W).
+        """
         self.pid_freq = PID(kp_freq, ki_freq, kd_freq, setpoint=setpoint, sample_time=sample_interval)
         self.pid_volt = PID(kp_volt, ki_volt, kd_volt, setpoint=setpoint, sample_time=sample_interval)
         self.pid_freq.output_limits = (min_frequency, max_frequency)
@@ -586,7 +605,7 @@ class PIDTuningStrategy(TuningStrategy):
         self.power_limit = power_limit
         self.last_hashrate: Optional[float] = None
         self.stagnation_count = 0
-        # Removed drop_count since we're not tracking hashrate drops anymore
+        # Removed drop_count since we're not tracking hashrate drops anymore, this was an overall network factor and not addressable in the hardware.
 
     def apply_strategy(
         self,
