@@ -5,6 +5,9 @@
 
 `bitaxepid.py` is an auto-tuning utility for the Bitaxe 601 Gamma, an open-source Bitcoin ASIC miner built on the Bitaxe Ultra platform with the BM1366 ASIC. This script optimizes miner performance by dynamically adjusting core voltage and frequency to hit a target hashrate while managing temperature and power usage. It uses dual PID controllers (via `simple-pid`) for precise tuning, offers a temperature-only mode with `--temp-watch`, and provides a cyberpunk-themed TUI for real-time monitoring. Tuning data is logged to CSV and JSON files for analysis and persistence.
 
+### Note
+Upgrades may require updates to all files. You should either download the FULL release for a version, or clone the main repo.
+
 ![example running](screenshot6.jpg)
 
 ---
@@ -43,7 +46,11 @@ The Bitaxe Supra Gamma (assumed similar to Bitaxe Ultra 204):
      ```bash
      bash setup.sh  # Requires uv
      ```
-
+## Podman
+```
+podman build --tag bitaxepid-container .
+podman run -it --publish 8093:8093 bitaxepid-container 192.168.68.111
+```
 ## Usage
 
 Run the script with the Bitaxe IP address and optional arguments:
