@@ -22,4 +22,4 @@ EXPOSE 8093
 # podman run -it --publish 8093:8093 bitaxepid-container 192.168.68.111
 # podman run --publish 8093:8093 bitaxepid-container 192.168.68.111
 
-ENTRYPOINT ["bash", "./start.sh"]
+ENTRYPOINT ["bash", "./podman.sh"]
