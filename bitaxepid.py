@@ -63,10 +63,10 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
 
 def start_metrics_server() -> None:
     """Start the HTTP server on port 8093 in a separate thread."""
-    server = ThreadedHTTPServer(('localhost', 8093), MetricsHandler)
+    server = ThreadedHTTPServer(('0.0.0.0', 8093), MetricsHandler)
     server_thread = Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
-    logging.info("Metrics server started on http://localhost:8093/metrics")
+    logging.info("Metrics server started on http://0.0.0.0:8093/metrics")
 
 def parse_stratum_url(url: str) -> Dict[str, Any]:
     """

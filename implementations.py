@@ -573,7 +573,6 @@ class PIDTuningStrategy(TuningStrategy):
     ) -> None:
         """
         Initialize the PID tuning strategy with control parameters.
-
         Args:
             kp_freq (float): Proportional gain for frequency PID.
             ki_freq (float): Integral gain for frequency PID.
@@ -606,7 +605,7 @@ class PIDTuningStrategy(TuningStrategy):
         self.power_limit = power_limit
         self.last_hashrate: Optional[float] = None
         self.stagnation_count = 0
-        self.drop_count = 0
+        # Removed drop_count since we're not tracking hashrate drops anymore, this was an overall network factor and not addressable in the hardware.
 
     def apply_strategy(
         self,
@@ -618,23 +617,9 @@ class PIDTuningStrategy(TuningStrategy):
     ) -> Tuple[float, float]:
         """
         Calculate new voltage and frequency settings based on the current miner status.
-
-        Args:
-            current_voltage (float): Current target voltage setting (mV).
-            current_frequency (float): Current target frequency setting (MHz).
-            temp (float): Current temperature (°C).
-            hashrate (float): Current hashrate (GH/s).
-            power (float): Current power consumption (W).
-
-        Returns:
-            Tuple[float, float]: New (voltage, frequency) settings (mV, MHz).
-
-        Example:
-            >>> strategy = PIDTuningStrategy(0.2, 0.01, 0.02, 0.1, 0.01, 0.02, 1100, 1300, 400, 575, 10, 25, 525, 5, 55, 15)
-            >>> new_settings = strategy.apply_strategy(1200, 485, 48, 500, 14.6)
-            >>> new_settings
-            (1200, 510)
+        Uses PID to maintain hashrate setpoint and reduces frequency to control temperature.
         """
+        # Calculate PID outputs
         freq_output = self.pid_freq(hashrate)
         volt_output = self.pid_volt(hashrate)
         proposed_frequency = round(freq_output / self.frequency_step) * self.frequency_step
@@ -642,14 +627,14 @@ class PIDTuningStrategy(TuningStrategy):
         proposed_voltage = round(volt_output / self.voltage_step) * self.voltage_step
         proposed_voltage = max(self.min_voltage, min(self.max_voltage, proposed_voltage))
 
-        hashrate_dropped = self.last_hashrate is not None and hashrate < self.last_hashrate
+        # Track hashrate stagnation but not drops
         stagnated = self.last_hashrate == hashrate
-        self.drop_count = self.drop_count + 1 if hashrate_dropped else 0
         self.stagnation_count = self.stagnation_count + 1 if stagnated else 0
 
         new_voltage = current_voltage
         new_frequency = current_frequency
 
+        # Temperature control - reduce frequency first, then voltage if needed
         if temp > self.target_temp:
             if current_frequency > self.min_frequency:
                 new_frequency = current_frequency - self.frequency_step
@@ -657,23 +642,24 @@ class PIDTuningStrategy(TuningStrategy):
             elif current_voltage > self.min_voltage:
                 new_voltage = current_voltage - self.voltage_step
                 console.print(f"[{WARNING_COLOR}]Reducing voltage to {new_voltage}mV due to temp {temp}°C > {self.target_temp}°C[/]")
+        # Power limit control
         elif power > self.power_limit * 1.075:
             if current_voltage > self.min_voltage:
                 new_voltage = current_voltage - self.voltage_step
                 console.print(f"[{WARNING_COLOR}]Reducing voltage to {new_voltage}mV due to power {power}W > {self.power_limit * 1.075}W[/]")
+        # Hashrate control using PID
         elif hashrate < self.pid_freq.setpoint:
-            if self.drop_count >= 30 and current_frequency > self.min_frequency:
-                new_frequency = current_frequency - self.frequency_step
-                console.print(f"[{WARNING_COLOR}]Reducing frequency to {new_frequency}MHz due to repeated hashrate drops[/]")
-            else:
-                if hashrate < 0.85 * self.pid_freq.setpoint and current_voltage < self.max_voltage:
-                    new_voltage = min(proposed_voltage, current_voltage + self.voltage_step)
-                    console.print(f"[{SECONDARY_ACCENT}]Increasing voltage to {new_voltage}mV due to hashrate {hashrate} < {0.85 * self.pid_freq.setpoint}[/]")
-                new_frequency = proposed_frequency
-                console.print(f"[{SECONDARY_ACCENT}]Adjusting frequency to {new_frequency}MHz via PID[/]")
-                if current_frequency >= self.max_frequency and current_voltage < self.max_voltage:
-                    new_voltage = current_voltage + self.voltage_step
-                    console.print(f"[{SECONDARY_ACCENT}]Increasing voltage to {new_voltage}mV as frequency at max[/]")
+            # If hashrate is significantly low, try increasing voltage first
+            if hashrate < 0.85 * self.pid_freq.setpoint and current_voltage < self.max_voltage:
+                new_voltage = min(proposed_voltage, current_voltage + self.voltage_step)
+                console.print(f"[{SECONDARY_ACCENT}]Increasing voltage to {new_voltage}mV due to hashrate {hashrate} < {0.85 * self.pid_freq.setpoint}[/]")
+            # Apply PID-calculated frequency
+            new_frequency = proposed_frequency
+            console.print(f"[{SECONDARY_ACCENT}]Adjusting frequency to {new_frequency}MHz via PID[/]")
+            # If at max frequency but still below setpoint, increase voltage
+            if current_frequency >= self.max_frequency and current_voltage < self.max_voltage:
+                new_voltage = current_voltage + self.voltage_step
+                console.print(f"[{SECONDARY_ACCENT}]Increasing voltage to {new_voltage}mV as frequency at max[/]")
         else:
             console.print(f"[{PRIMARY_ACCENT}]System stable at Voltage={current_voltage}mV, Frequency={new_frequency}MHz[/]")
 
