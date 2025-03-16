@@ -1,5 +1,5 @@
 # Use the official Python base image
-FROM python:latest
+FROM python:3.12-slim-bookworm
 
 # Add metadata about the maintainer
 LABEL maintainer="bitaxepid@starficient.com"
