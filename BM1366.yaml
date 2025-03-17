@@ -20,7 +20,7 @@ PID_VOLT_KD: 0.02
 LOG_FILE: "bitaxepid_tuning_log_BM1366.csv"
 SNAPSHOT_FILE: "bitaxepid_snapshot_BM1366.json"
 POOLS_FILE: "pools.yaml"
-METRICS_SERVE: FALSE
+METRICS_SERVE: false # yaml boolean lowercase true/false
 USER_FILE: "user.yaml"
 # PRIMARY_STRATUM: "stratum+tcp://stratum.solomining.io:7777"
 # BACKUP_STRATUM: "stratum+tcp://stratum.solomining.io:7777"
