@@ -128,7 +128,7 @@ class ILogger(ABC):
         current: float,
         core_voltage_actual: float,
         frequency: float,
-        fanrpm: int
+        fanrpm: int,
     ) -> None:
         """
         Log miner performance data, including PID settings, to a CSV file.
@@ -192,7 +192,9 @@ class ITerminalUI(ABC):
     """Interface for terminal-based user interfaces to display miner statistics."""
 
     @abstractmethod
-    def update(self, system_info: Dict[str, Any], voltage: float, frequency: float) -> None:
+    def update(
+        self, system_info: Dict[str, Any], voltage: float, frequency: float
+    ) -> None:
         """
         Update terminal UI with the latest miner data.
 
@@ -217,7 +219,7 @@ class TuningStrategy(ABC):
         current_frequency: float,
         temp: float,
         hashrate: float,
-        power: float
+        power: float,
     ) -> Tuple[float, float]:
         """
         Calculate new voltage and frequency settings based on the current miner status.
