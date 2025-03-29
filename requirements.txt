@@ -8,6 +8,7 @@ pyyaml>=6.0
 typing-extensions>=4.0.0  # For Python 3.5+ compatibility with typing
 simple-pid>=1.0.1  # For PIDTuningStrategy
 pyfiglet>=0.8.post1  # For RichTerminalUI
+fastdigest
 
 # Standard library packages (already included in Python, no pip install needed)
 # logging
