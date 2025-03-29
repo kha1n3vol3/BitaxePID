@@ -128,17 +128,23 @@ def update_single_pool(pool: Dict[str, Any], attempts: int = 5) -> float:
         pool: Pool dictionary with 'endpoint'.
         attempts: Number of latency measurement attempts.
     Returns:
-        Median latency in milliseconds.
+        Median latency in milliseconds, or infinity if no successful measurements.
     """
     endpoint_str = pool['endpoint']
     hostname, port = parse_endpoint(endpoint_str)
     tdigest = load_tdigest(hostname, port)
+    successful_updates = 0
     for _ in range(attempts):
         latency = measure_single_latency(hostname, port)
         if latency != float('inf'):
             tdigest.update(latency)
+            successful_updates += 1
     save_tdigest(hostname, port, tdigest)
-    return tdigest.quantile(0.5) if tdigest.size() > 0 else float('inf')
+    if successful_updates > 0:
+        return tdigest.quantile(0.5)
+    else:
+        print(f"No successful latency measurements for {endpoint_str}")
+        return float('inf')
 
 def update_pools_yaml(endpoint: str, median: float) -> None:
     """
