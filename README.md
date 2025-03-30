@@ -127,6 +127,8 @@ USER_FILE: "user.yaml"       # Used if stratum user is blank; force with --strat
 # BACKUP_STRATUM: "stratum+tcp://stratum.solomining.io:7777"
 ```
 
+![functions flow diagram](bitaxepid-diagram.svg)
+
 ## What is a PID Controller?
 A PID (Proportional-Integral-Derivative) controller is a feedback mechanism that adjusts a process to maintain a desired target. It combines:
 - **Proportional (P):** Responds to the current error (e.g., difference between actual and target temperature).
