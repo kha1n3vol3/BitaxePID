@@ -63,13 +63,13 @@ options:
   --ip IP               IP address of the Bitaxe miner
   --config CONFIG       Path to optional user YAML configuration file
   --user-file USER_FILE
-                        Path to user YAML file (default: from config)
+                        Path to user YAML file
   --pools-file POOLS_FILE
-                        Path to pools YAML file (default: from config)
+                        Path to pools YAML file
   --primary-stratum PRIMARY_STRATUM
-                        Primary stratum URL (e.g., stratum+tcp://host:port)
+                        Primary stratum URL
   --backup-stratum BACKUP_STRATUM
-                        Backup stratum URL (e.g., stratum+tcp://host:port)
+                        Backup stratum URL
   --stratum-user STRATUM_USER
                         Stratum user for primary pool
   --fallback-stratum-user FALLBACK_STRATUM_USER
@@ -82,7 +82,7 @@ options:
   --log-to-console      Log to console instead of UI
   --logging-level {info,debug}
                         Logging level
-  --serve-metrics       Serve metrics via HTTP on port 8093 (default: False)
+  --serve-metrics       Serve metrics via HTTP on port 8093
 
 ### Configuration Notes
 The script loads default settings from an ASIC model-specific YAML file (e.g., BM1366.yaml).
@@ -103,7 +103,6 @@ VOLTAGE_STEP: 10
 TARGET_TEMP: 55.0
 SAMPLE_INTERVAL: 5
 POWER_LIMIT: 15.0
-HASHRATE_SETPOINT: 525
 PID_FREQ_KP: 0.2
 PID_FREQ_KI: 0.01
 PID_FREQ_KD: 0.02
