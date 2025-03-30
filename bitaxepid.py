@@ -40,7 +40,7 @@ from implementations import (
 from pools import get_fastest_pools
 
 console = Console()
-__version__ = "1.0.3"
+__version__ = "1.0.4"
 latest_metrics: List[Dict[str, Any]] = []
 
 
