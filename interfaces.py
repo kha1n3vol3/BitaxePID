@@ -2,121 +2,125 @@
 """
 Interfaces Module for BitaxePID Auto-Tuner
 
-This module defines abstract base classes (ABCs) for the BitaxePID auto-tuner’s components, including
-API communication, logging, configuration loading, terminal UI, and tuning strategies. These interfaces
-ensure a consistent contract for implementations used in the tuning system.
-
-Usage:
-    >>> from interfaces import IBitaxeAPIClient
-    >>> class MyClient(IBitaxeAPIClient):
-    ...     def get_system_info(self):
-    ...         return {"hashRate": 500}
-    ...     def set_settings(self, voltage, frequency):
-    ...         return frequency
-    ...     def set_stratum(self, primary, backup):
-    ...         return True
-    ...     def restart(self):
-    ...         return True
-    ...     def close(self):
-    ...         pass
-    >>> client = MyClient()
-    >>> client.get_system_info()
-    {'hashRate': 500}
+This module defines abstract base classes (ABCs) for various components
+used in the BitaxePID Auto-Tuner, ensuring a consistent interface for
+different implementations.
 """
 
+# Standard library imports
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, Tuple
 
 
 class IBitaxeAPIClient(ABC):
-    """Interface for communicating with the Bitaxe miner hardware via an API."""
+    """
+    Abstract base class for Bitaxe API clients.
+
+    Defines the interface for interacting with the Bitaxe miner's API.
+    """
 
     @abstractmethod
     def get_system_info(self) -> Optional[Dict[str, Any]]:
         """
-        Retrieve current system information from the miner.
+        Retrieve system information from the Bitaxe miner.
 
         Returns:
-            Optional[Dict[str, Any]]: System information as a dictionary (e.g., {"hashRate": 500, "temp": 48}), or None if unavailable.
-
-        Example:
-            >>> client.get_system_info()
-            {'hashRate': 500.0, 'temp': 48, 'coreVoltageActual': 1200}
+            Optional[Dict[str, Any]]: A dictionary containing system information
+                if successful, None otherwise.
         """
         pass
 
     @abstractmethod
     def set_settings(self, voltage: float, frequency: float) -> float:
         """
-        Set voltage and frequency on the miner and return the actual applied frequency.
+        Set the voltage and frequency settings on the Bitaxe miner.
 
         Args:
-            voltage (float): Target core voltage to set (mV).
-            frequency (float): Target frequency to set (MHz).
+            voltage (float): The target voltage in millivolts (mV).
+            frequency (float): The target frequency in megahertz (MHz).
 
         Returns:
-            float: The actual frequency applied by the miner (MHz).
-
-        Example:
-            >>> client.set_settings(1200, 485)
-            485.0
+            float: The frequency set, returned even if the operation fails.
         """
         pass
 
     @abstractmethod
     def set_stratum(self, primary: Dict[str, Any], backup: Dict[str, Any]) -> bool:
         """
-        Configure primary and backup stratum pools.
+        Configure the primary and backup stratum servers.
 
         Args:
-            primary (Dict[str, Any]): Configuration for the primary stratum pool (e.g., {"hostname": "solo.ckpool.org", "port": 3333}).
-            backup (Dict[str, Any]): Configuration for the backup stratum pool (e.g., {"hostname": "pool.example.com", "port": 3333}).
+            primary (Dict[str, Any]): Dictionary containing primary stratum settings.
+            backup (Dict[str, Any]): Dictionary containing backup stratum settings.
 
         Returns:
-            bool: True if the stratum settings were successfully applied, False otherwise.
-
-        Example:
-            >>> primary = {"hostname": "solo.ckpool.org", "port": 3333, "user": "user1"}
-            >>> backup = {"hostname": "pool.example.com", "port": 3333, "user": "user2"}
-            >>> client.set_stratum(primary, backup)
-            True
+            bool: True if the configuration is successful, False otherwise.
         """
         pass
 
     @abstractmethod
     def restart(self) -> bool:
         """
-        Restart the miner.
+        Restart the Bitaxe miner and verify it comes back online.
 
         Returns:
-            bool: True if the restart was successful, False otherwise.
-
-        Example:
-            >>> client.restart()
-            True
+            bool: True if the restart is successful and the miner responds,
+                False otherwise.
         """
         pass
 
     @abstractmethod
     def close(self) -> None:
         """
-        Close any resources (e.g., connection pools) used by the API client.
+        Close any open connections or resources used by the API client.
+        """
+        pass
 
-        This method ensures that implementations properly clean up network connections or other resources
-        when the client is no longer needed, preventing resource leaks.
 
-        Example:
-            >>> client.close()
+class TuningStrategy(ABC):
+    """
+    Abstract base class for tuning strategies.
+
+    Defines the interface for strategies that adjust voltage and frequency
+    based on current conditions.
+    """
+
+    @abstractmethod
+    def apply_strategy(
+        self,
+        current_voltage: float,
+        current_frequency: float,
+        temp: float,
+    ) -> Tuple[float, float]:
+        """
+        Calculate new voltage and frequency settings based on current conditions.
+
+        This method should implement the logic to adjust voltage and frequency
+        to optimize performance or maintain stability based on the current temperature.
+
+        Args:
+            current_voltage (float): Current target voltage in millivolts (mV).
+            current_frequency (float): Current target frequency in megahertz (MHz).
+            temp (float): Current temperature in degrees Celsius (°C).
+
+        Returns:
+            Tuple[float, float]: New voltage and frequency settings as
+                (voltage in mV, frequency in MHz).
         """
         pass
 
 
 class ILogger(ABC):
-    """Interface for logging miner data and snapshots."""
+    """
+    Abstract base class for logging implementations.
+
+    Defines the interface for logging miner performance data and saving snapshots.
+    """
 
     @abstractmethod
     def log_to_csv(
         self,
+        mac_address: str,
         timestamp: str,
         target_frequency: float,
         target_voltage: float,
@@ -131,111 +135,78 @@ class ILogger(ABC):
         fanrpm: int,
     ) -> None:
         """
-        Log miner performance data, including PID settings, to a CSV file.
+        Log miner performance data to a CSV file and update t-digest files.
+
+        This method records various metrics and settings to a CSV log for analysis
+        and updates t-digest files for statistical summaries.
 
         Args:
-            timestamp (str): Time of the data point (e.g., "2025-03-11 10:00:00").
-            target_frequency (float): Target frequency commanded by PID (MHz).
-            target_voltage (float): Target core voltage commanded by PID (mV).
-            hashrate (float): Measured hashrate (GH/s).
-            temp (float): Measured temperature (°C).
-            pid_settings (Dict[str, Any]): PID controller settings (e.g., {"PID_FREQ_KP": 0.2}).
-            power (float): Measured power consumption (W).
-            board_voltage (float): Measured board voltage (mV).
-            current (float): Measured current (mA).
-            core_voltage_actual (float): Actual core voltage (mV).
-            frequency (float): Actual frequency (MHz).
-            fanrpm (int): Fan speed (RPM).
-
-        Example:
-            >>> logger.log_to_csv("2025-03-11 10:00:00", 485, 1200, 500, 48, {"PID_FREQ_KP": 0.2}, 14.6, 4812.5, 3001.25, 1312, 485, 3870)
+            mac_address (str): MAC address of the miner.
+            timestamp (str): Timestamp of the log entry.
+            target_frequency (float): Target frequency in megahertz (MHz).
+            target_voltage (float): Target voltage in millivolts (mV).
+            hashrate (float): Current hashrate.
+            temp (float): Current temperature in degrees Celsius (°C).
+            pid_settings (Dict[str, Any]): Dictionary of PID controller settings.
+            power (float): Current power consumption in watts.
+            board_voltage (float): Measured board voltage.
+            current (float): Measured current.
+            core_voltage_actual (float): Actual core voltage.
+            frequency (float): Actual frequency in megahertz (MHz).
+            fanrpm (int): Fan speed in revolutions per minute (RPM).
         """
         pass
 
     @abstractmethod
     def save_snapshot(self, voltage: float, frequency: float) -> None:
         """
-        Save current miner settings as a snapshot.
+        Save a snapshot of the current voltage and frequency settings.
 
         Args:
-            voltage (float): Current target voltage setting (mV).
-            frequency (float): Current target frequency setting (MHz).
-
-        Example:
-            >>> logger.save_snapshot(1200, 485)
+            voltage (float): Current voltage in millivolts (mV).
+            frequency (float): Current frequency in megahertz (MHz).
         """
         pass
 
 
 class IConfigLoader(ABC):
-    """Interface for loading configuration data from external sources."""
+    """
+    Abstract base class for configuration loaders.
+
+    Defines the interface for loading configuration data from a file.
+    """
 
     @abstractmethod
     def load_config(self, file_path: str) -> Dict[str, Any]:
         """
-        Load configuration settings from a file.
+        Load configuration data from a specified file path.
 
         Args:
-            file_path (str): Path to the configuration file (e.g., "BM1366.yaml").
+            file_path (str): Path to the configuration file.
 
         Returns:
-            Dict[str, Any]: Configuration data as a dictionary (e.g., {"INITIAL_VOLTAGE": 1200}).
-
-        Example:
-            >>> loader.load_config("BM1366.yaml")
-            {'INITIAL_VOLTAGE': 1200, 'SAMPLE_INTERVAL': 5}
+            Dict[str, Any]: A dictionary containing the configuration data.
         """
         pass
 
 
 class ITerminalUI(ABC):
-    """Interface for terminal-based user interfaces to display miner statistics."""
+    """
+    Abstract base class for terminal user interfaces.
+
+    Defines the interface for updating the terminal display with miner status.
+    """
 
     @abstractmethod
     def update(
         self, system_info: Dict[str, Any], voltage: float, frequency: float
     ) -> None:
         """
-        Update terminal UI with the latest miner data.
+        Update the terminal UI with the latest system information and settings.
 
         Args:
-            system_info (Dict[str, Any]): Current system information (e.g., {"hashRate": 500, "temp": 48}).
-            voltage (float): Current target voltage setting (mV).
-            frequency (float): Current target frequency setting (MHz).
-
-        Example:
-            >>> ui.update({"hashRate": 500, "temp": 48}, 1200, 485)
-        """
-        pass
-
-
-class TuningStrategy(ABC):
-    """Interface for tuning strategies managing miner settings adjustments."""
-
-    @abstractmethod
-    def apply_strategy(
-        self,
-        current_voltage: float,
-        current_frequency: float,
-        temp: float,
-        hashrate: float,
-        power: float,
-    ) -> Tuple[float, float]:
-        """
-        Calculate new voltage and frequency settings based on the current miner status.
-
-        Args:
-            current_voltage (float): Current target voltage setting (mV).
-            current_frequency (float): Current target frequency setting (MHz).
-            temp (float): Current temperature (°C).
-            hashrate (float): Current hashrate (GH/s).
-            power (float): Current power consumption (W).
-
-        Returns:
-            Tuple[float, float]: New (voltage, frequency) settings (mV, MHz).
-
-        Example:
-            >>> strategy.apply_strategy(1200, 485, 48, 500, 14.6)
-            (1220, 510)
+            system_info (Dict[str, Any]): Dictionary containing system information.
+            voltage (float): Current voltage in millivolts (mV).
+            frequency (float): Current frequency in megahertz (MHz).
         """
         pass
