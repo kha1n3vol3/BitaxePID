@@ -2,37 +2,29 @@
 ![logo](bitaxepid-logo.jpg)
 
 ## Overview
+The BitaxePID Auto-Tuner is designed to enhance the efficiency and reliability of Bitaxe miners by automating the adjustment of operational parameters—specifically voltage and frequency—based on real-time conditions. Its primary intent is to maintain an optimal operating temperature (via a PID control loop) while maximizing mining performance, preventing overheating, and ensuring stability. Here’s a breakdown of the purpose behind its logic:
 
-`bitaxepid.py` is an auto-tuning utility for the Bitaxe 601 Gamma, an open-source Bitcoin ASIC miner built on the Bitaxe Ultra platform with the BM1366 ASIC. This script optimizes miner performance by dynamically adjusting core voltage and frequency to hit a target hashrate while managing temperature and power usage. It uses dual PID controllers (via `simple-pid`) for precise tuning, offers a temperature-only mode with `--temp-watch`, and provides a cyberpunk-themed TUI for real-time monitoring. Tuning data is logged to CSV and JSON files for analysis and persistence.
+1. **Dynamic Optimization:**
+   - The system uses a `PIDTuningStrategy` to continuously monitor the miner’s temperature and adjust frequency to keep it near a target setpoint. If temperature exceeds safe thresholds despite frequency adjustments, voltage is reduced, balancing performance and thermal safety.
+   - This dynamic tuning contrasts with static settings, adapting to environmental changes or hardware variations.
 
-### Note
-Upgrades may require updates to all files. You should either download the FULL release for a version, or clone the main repo.
+2. **Pool Management Efficiency:**
+   - The `pools` module measures network latencies to mining pools using t-digest statistics, selecting the two fastest pools to minimize latency and improve mining efficiency. This ensures the miner connects to the most responsive servers, reducing downtime or inefficiencies due to network delays.
 
-![example running](screenshot6.jpg)
+3. **Modularity and Flexibility:**
+   - By defining interfaces (`IBitaxeAPIClient`, `TuningStrategy`, etc.) and using dependency injection in `TuningManager`, the system is modular and extensible. Users can swap implementations (e.g., different tuning strategies or UIs) without altering core logic.
+   - Configuration is loaded from YAML files, with command-line overrides, allowing customization for different ASIC models or user preferences.
 
----
+4. **Monitoring and Analysis:**
+   - The `Logger` records detailed metrics (hashrate, temperature, power, etc.) to a CSV file and maintains t-digest statistics for trend analysis at various temperatures. This data supports performance optimization and troubleshooting.
+   - An optional metrics server (port 8093) provides real-time monitoring, useful for managing multiple miners or integrating with external systems.
 
-### Intent
-- **Performance Optimization**: Adjusts voltage (1100–2400 mV) and frequency (400–550 MHz, in 25 MHz steps) to meet a user-defined hashrate setpoint using PID control.
-- **Thermal Management**: Ensures safe operation by reducing settings when temperature exceeds the target, using the EMC2101 sensor near the BM1366. In `--temp-watch` mode, this takes precedence over hashrate goals.
-- **Stability**: Persists settings across runs with a snapshot file, resets PID on stagnation, and avoids unstable adjustments.
-- **User Experience**: Features a rich TUI with ANSI-art hashrate display, system stats, progress bars, and logs, alongside detailed file-based logging.
+5. **User Experience:**
+   - The `RichTerminalUI` offers a dynamic, visually rich interface for real-time status updates, while `NullTerminalUI` supports console-only logging, catering to different user needs.
+   - Graceful shutdown handling ensures resources are cleaned up properly upon interruption.
 
-### Hardware Context
-The Bitaxe Supra Gamma (assumed similar to Bitaxe Ultra 204):
-- BM1366 ASIC: 0.021 J/GH efficiency.
-- Power: 5V DC, 15W max, via TI TPS40305 buck regulator and Maxim DS4432U+ DAC (0.04V–2.4V core voltage).
-- Control: ESP32-S3-WROOM-1 for WiFi/API, with INA260 power meter and EMC2101 for fan/temp monitoring.
-- Cooling: Requires a 40x40mm fan.
-
-## Features
-
-- **Model-Specific Configuration**: Load custom settings for different hardware models or tuning scenarios using a YAML configuration file via the `--config` switch.
-- **PID Control**: Dual PID controllers tune frequency (`Kp=0.1`, `Ki=0.01`, `Kd=0.05`) and voltage (`Kp=0.05`, `Ki=0.005`, `Kd=0.02`) to achieve the hashrate setpoint, with `--temp-watch` overriding to focus on temperature.
-- **Safety Constraints**: Respects hardware limits (15W power, 2400 mV max voltage, 400 MHz min frequency).
-- **Snapshot Persistence**: Saves settings to `bitaxepid_snapshot.json` for continuity across runs.
-- **TUI Display**: Cyberpunk-style interface with integer GH/s ANSI art, system stats (temp, power, voltage), progress bars, and a scrolling log.
-- **Logging**: Outputs to `bitaxepid_monitor.log` and `bitaxepid_tuning_log.csv`, with an optional `--log-to-console` mode to disable the TUI.
+**Overall Purpose:**
+The logic is structured to create a robust, automated solution that keeps Bitaxe miners running efficiently under varying conditions. It balances performance (via frequency adjustments), safety (via voltage control), and connectivity (via pool selection), while providing tools for monitoring and customization. This makes it valuable for miners seeking to maximize output without manual intervention or risking hardware damage.
 
 ## Installation
 
