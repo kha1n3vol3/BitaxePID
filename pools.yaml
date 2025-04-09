@@ -1,6 +1,9 @@
 - endpoint: stratum+tcp://pool.satoshiradio.nl:3333
   fee: ?%
   www: https://pool.satoshiradio.nl/
+- endpoint: stratum+tcp://pool.solomining.de:3333
+  fee: 0%
+  www: https://solomining.de/
 - endpoint: stratum+tcp://pool.noderunners.network:1337
   fee: 1%
   www: https://noderunners.network/en/pool
