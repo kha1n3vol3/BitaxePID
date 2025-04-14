@@ -56,6 +56,8 @@ podman run -it --publish 8093:8093 bitaxepid-container 192.168.68.111
 Run the script with the Bitaxe IP address and optional arguments:
 ```bash
 python bitaxepid.py --ip 192.168.68.111 --config custom_config.yaml --voltage 1200 --frequency 500
+or if you have the uv venv installation;
+bash ./start.sh 192.168.68.111
 or
 % python bitaxepid.py --help
 usage: bitaxepid.py [-h] [--version] --ip IP [--config CONFIG] [--user-file USER_FILE] [--pools-file POOLS_FILE]
