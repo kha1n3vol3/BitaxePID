@@ -44,7 +44,7 @@ The Bitaxe Supra Gamma (assumed similar to Bitaxe Ultra 204):
      ```
      Or use:
      ```bash
-     bash setup.sh  # Requires uv
+     bash setup.sh  # Requires uv see https://docs.astral.sh/uv/getting-started/installation/
      ```
 ## Podman
 ```
