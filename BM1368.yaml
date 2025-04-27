@@ -1,10 +1,10 @@
 # BM1368.yaml
-initial_frequency: 490       # "490 (default)" from BM1368DropdownFrequency
-min_frequency: 400           # lowest available frequency in BM1368DropdownFrequency
-max_frequency: 575           # highest available frequency in BM1368DropdownFrequency
-initial_voltage: 1166        # "1166 (default)" from BM1368CoreVoltage
-min_voltage: 1100            # lowest available voltage in BM1368CoreVoltage
-max_voltage: 1300            # highest available voltage in BM1368CoreVoltage
+INITIAL_FREQUENCY: 490       # "490 (default)" from BM1368DropdownFrequency
+MIN_FREQUENCY: 400           # lowest available frequency in BM1368DropdownFrequency
+MAX_FREQUENCY: 575           # highest available frequency in BM1368DropdownFrequency
+INITIAL_VOLTAGE: 1166        # "1166 (default)" from BM1368CoreVoltage
+MIN_VOLTAGE: 1100            # lowest available voltage in BM1368CoreVoltage
+MAX_VOLTAGE: 1300            # highest available voltage in BM1368CoreVoltage
 FREQUENCY_STEP: 25
 VOLTAGE_STEP: 10
 TARGET_TEMP: 45.0

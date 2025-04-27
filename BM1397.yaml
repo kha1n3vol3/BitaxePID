@@ -1,10 +1,10 @@
 # BM1397.yaml
-initial_frequency: 425       # "425 (default)" from BM1397DropdownFrequency
-min_frequency: 400           # lowest available frequency in BM1397DropdownFrequency
-max_frequency: 650           # highest available frequency in BM1397DropdownFrequency
-initial_voltage: 1200        # default value from BM1397CoreVoltage (no explicit default marker)
-min_voltage: 1100            # lowest available voltage in BM1397CoreVoltage
-max_voltage: 1500            # highest available voltage in BM1397CoreVoltage
+INITIAL_FREQUENCY: 425       # "425 (default)" from BM1397DropdownFrequency
+MIN_FREQUENCY: 400           # lowest available frequency in BM1397DropdownFrequency
+MAX_FREQUENCY: 650           # highest available frequency in BM1397DropdownFrequency
+INITIAL_VOLTAGE: 1200        # default value from BM1397CoreVoltage (no explicit default marker)
+MIN_VOLTAGE: 1100            # lowest available voltage in BM1397CoreVoltage
+MAX_VOLTAGE: 1500            # highest available voltage in BM1397CoreVoltage
 FREQUENCY_STEP: 25
 VOLTAGE_STEP: 10
 TARGET_TEMP: 45.0

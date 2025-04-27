@@ -1,10 +1,10 @@
 # BM1370.yaml
-initial_frequency: 525       # "525 (default)" from BM1370DropdownFrequency
-min_frequency: 400           # lowest available frequency in BM1370DropdownFrequency
-max_frequency: 625           # highest available frequency in BM1370DropdownFrequency
-initial_voltage: 1150        # "1150 (default)" from BM1370CoreVoltage
-min_voltage: 1000            # lowest available voltage in BM1370CoreVoltage
-max_voltage: 1250            # highest available voltage in BM1370CoreVoltage
+INITIAL_FREQUENCY: 550       # Match API frequency (550 MHz)
+MIN_FREQUENCY: 400           # Lowest available frequency
+MAX_FREQUENCY: 625           # Highest available frequency
+INITIAL_VOLTAGE: 1150        # Match API coreVoltage (1150 mV)
+MIN_VOLTAGE: 1000            # Lowest available voltage
+MAX_VOLTAGE: 1250            # Highest available voltage
 FREQUENCY_STEP: 25
 VOLTAGE_STEP: 10
 TARGET_TEMP: 45.0
